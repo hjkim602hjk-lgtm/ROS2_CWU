@@ -1,4 +1,17 @@
-# CWU LiDAR 2D SLAM
+# ROS2 창원대학교 대회 로봇
+
+## 프로젝트 개요
+
+**하드웨어**: Nucleo F446RE / 라즈베리파이 4 / 모터 드라이버 Cytron
+**센서**: YDLIDAR G4, Intel RealSense D415
+**라즈베리파이**: Ubuntu Server 22.04, `ssh ubuntu@raspberrypi.local` (비밀번호는 저장소에 두지 않습니다)
+**개발 환경**: VSCode, 아두이노 측은 PlatformIO 확장 사용 예정
+
+**목표 1**: 미로 속 물체를 인식하고 그리퍼로 잡은 후 원래 자리로 복귀
+**목표 2**: 경기장 중앙의 물체를 빠르게 인식·파지하고 뺏기지 않게 유지
+
+---
+
 
 ROS 2 Humble / Ubuntu 22.04 / YDLIDAR G4 / 엔코더 기반 이동 로봇용 구성입니다.
 SLAM Toolbox가 지도와 위치를 추정합니다. 라즈베리파이 4에서는 센서 드라이버,
