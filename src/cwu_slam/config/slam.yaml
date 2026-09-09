@@ -1,0 +1,45 @@
+# SLAM Toolbox의 지도 생성과 위치 추정 동작을 설정합니다.
+# /scan과 odom → base_link TF를 사용하며, 지도 해상도·갱신 주기·scan matching·loop closure를 조정합니다.
+# resolution: 0.05는 지도 한 칸이 5cm × 5cm라는 뜻입니다.
+
+slam_toolbox:
+  ros__parameters:
+    use_sim_time: false
+    mode: mapping
+    odom_frame: odom
+    map_frame: map
+    base_frame: base_link
+    scan_topic: /scan
+    solver_plugin: solver_plugins::CeresSolver
+    ceres_linear_solver: SPARSE_NORMAL_CHOLESKY
+    ceres_preconditioner: SCHUR_JACOBI
+    ceres_trust_strategy: LEVENBERG_MARQUARDT
+    ceres_dogleg_type: TRADITIONAL_DOGLEG
+    ceres_loss_function: None
+    resolution: 0.05
+    min_laser_range: 0.12
+    max_laser_range: 12.0
+    throttle_scans: 1
+    minimum_time_interval: 0.2
+    minimum_travel_distance: 0.05
+    minimum_travel_heading: 0.10
+    transform_publish_period: 0.05
+    transform_timeout: 0.2
+    tf_buffer_duration: 30.0
+    map_update_interval: 2.0
+    stack_size_to_use: 40000000
+    use_map_saver: true
+    enable_interactive_mode: false
+    debug_logging: false
+    use_scan_matching: true
+    use_scan_barycenter: true
+    scan_buffer_size: 10
+    scan_buffer_maximum_scan_distance: 10.0
+    link_match_minimum_response_fine: 0.1
+    link_scan_maximum_distance: 1.5
+    loop_search_maximum_distance: 3.0
+    do_loop_closing: true
+    loop_match_minimum_chain_size: 10
+    loop_match_maximum_variance_coarse: 3.0
+    loop_match_minimum_response_coarse: 0.35
+    loop_match_minimum_response_fine: 0.45

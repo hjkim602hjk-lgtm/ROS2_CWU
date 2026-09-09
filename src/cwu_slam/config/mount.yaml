@@ -1,0 +1,15 @@
+# 로봇 본체(base_link) 기준 LiDAR(laser_frame)의 장착 위치와 각도를 설정합니다.
+# x/y/z는 m, roll/pitch/yaw는 rad 단위이며 실제 장착값을 측정해서 입력해야 합니다.
+# 현재의 모든 0은 미보정 기본값이며, 이 값으로 정적 TF를 발행합니다.
+
+# Placeholder identity mount: measure and replace before hardware operation.
+# ROS REP-103: metres, radians; +x forward, +y left, +z up.
+# If the robot URDF publishes this transform, use publish_mount_tf:=false.
+#로봇 본체 기준 LIDAR의 장착 위치, 각도
+laser_mount:
+  x: 0.0
+  y: 0.0
+  z: 0.0
+  roll: 0.0
+  pitch: 0.0
+  yaw: 0.0

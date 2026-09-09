@@ -1,0 +1,11 @@
+{
+  "names": {
+    "ydlidar_ros2_driver": {
+      "dependencies": ["ydlidar_sdk"],
+      "cmake-args": ["-DBUILD_TESTING=OFF"]
+    },
+    "ydlidar_sdk": {
+      "cmake-args": ["-DBUILD_EXAMPLES=OFF", "-DBUILD_TEST=OFF"]
+    }
+  }
+}

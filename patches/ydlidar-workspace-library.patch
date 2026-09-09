@@ -1,0 +1,21 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index af4e2b2..3c9f477 100755
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -23,6 +23,11 @@ find_package(std_srvs REQUIRED)
+ ############## YDLIDAR SDK START#####################################
+ #find ydlidar_sdk package
+ find_package(ydlidar_sdk REQUIRED)
++# SDK 1.2.20 exports an empty library directory for non-system installations.
++find_library(CWU_YDLIDAR_LIBRARY NAMES ydlidar_sdk
++  HINTS "${ydlidar_sdk_DIR}/../.." REQUIRED)
++list(REMOVE_ITEM YDLIDAR_SDK_LIBRARIES ydlidar_sdk)
++list(PREPEND YDLIDAR_SDK_LIBRARIES "${CWU_YDLIDAR_LIBRARY}")
+ ############## YDLIDAR SDK END#####################################
+ 
+ #Include directories
+@@ -85,4 +90,3 @@ if(BUILD_TESTING)
+ endif()
+ 
+ ament_package()
+-

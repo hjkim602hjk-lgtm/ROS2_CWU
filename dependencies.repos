@@ -1,0 +1,12 @@
+# 작업공간에 필요한 제조사 G4 드라이버와 SDK의 Git 저장소·커밋을 고정합니다.
+# 동일한 소스 버전을 다시 가져오기 위한 vcstool 형식의 의존성 목록입니다.
+
+repositories:
+  src/ydlidar_sdk:
+    type: git
+    url: https://github.com/YDLIDAR/YDLidar-SDK.git
+    version: 01cdda4f2b36dff2a706d0535c64228d863c7411
+  src/ydlidar_ros2_driver:
+    type: git
+    url: https://github.com/YDLIDAR/ydlidar_ros2_driver.git
+    version: 4ef70d3f32a85704ade0be54b214f3763b1ab3e8

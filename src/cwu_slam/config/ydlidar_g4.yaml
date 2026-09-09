@@ -1,0 +1,30 @@
+# 제조사 ROS 2 드라이버에 전달할 YDLIDAR G4 통신·스캔 설정입니다.
+# 직렬 포트, baudrate, 스캔 주파수, 각도·거리 범위와 센서 좌표계 이름을 지정합니다.
+# 실물에서 포트와 스캔 방향을 확인해야 하며 출력 데이터는 /scan으로 전달됩니다.
+
+# Based on the vendor's humble/params/G4.yaml; confirm settings on your unit.
+ydlidar_ros2_driver_node:
+  ros__parameters:
+    port: /dev/ttyUSB0
+    frame_id: laser_frame
+    ignore_array: ""
+    baudrate: 230400
+    lidar_type: 1
+    device_type: 0
+    isSingleChannel: false
+    intensity: false
+    intensity_bit: 0
+    sample_rate: 9
+    abnormal_check_count: 4
+    fixed_resolution: true
+    reversion: false
+    inverted: false
+    auto_reconnect: true
+    support_motor_dtr: false
+    angle_max: 180.0
+    angle_min: -180.0
+    range_max: 12.0
+    range_min: 0.12
+    frequency: 10.0
+    invalid_range_is_inf: true
+    debug: false

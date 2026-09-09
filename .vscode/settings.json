@@ -1,0 +1,20 @@
+{
+    "ROS2.distro": "humble",
+    "python.autoComplete.extraPaths": [
+        "/home/ccorrobbibbo/ros_CWU/build/cwu_slam",
+        "/home/ccorrobbibbo/ros_CWU/install/cwu_slam/lib/python3.10/site-packages",
+        "/home/ccorrobbibbo/ros2_ws/build/ros2_python_tutorial",
+        "/home/ccorrobbibbo/ros2_ws/install/ros2_python_tutorial/lib/python3.10/site-packages",
+        "/opt/ros/humble/lib/python3.10/site-packages",
+        "/opt/ros/humble/local/lib/python3.10/dist-packages"
+    ],
+    "python.analysis.extraPaths": [
+        "/home/ccorrobbibbo/ros_CWU/build/cwu_slam",
+        "/home/ccorrobbibbo/ros_CWU/install/cwu_slam/lib/python3.10/site-packages",
+        "/home/ccorrobbibbo/ros2_ws/build/ros2_python_tutorial",
+        "/home/ccorrobbibbo/ros2_ws/install/ros2_python_tutorial/lib/python3.10/site-packages",
+        "/opt/ros/humble/lib/python3.10/site-packages",
+        "/opt/ros/humble/local/lib/python3.10/dist-packages"
+    ],
+    "git.postCommitCommand": "push"
+}

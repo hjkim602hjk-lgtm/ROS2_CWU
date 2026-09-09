@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<!-- cwu_slam의 ROS 2 패키지 정보와 실행·테스트 의존성을 선언합니다.
+     colcon과 ROS 도구가 패키지 이름, 빌드 방식, 필요한 라이브러리를 파악할 때 사용합니다. -->
+<package format="3">
+  <name>cwu_slam</name>
+  <version>0.1.0</version>
+  <description>Onboard G4 and encoder-assisted 2D SLAM with a separate synthetic demo.</description>
+  <maintainer email="maintainer@example.com">CWU Robot Team</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_python</buildtool_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>slam_toolbox</exec_depend>
+  <exec_depend>nav2_map_server</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <test_depend>python3-pytest</test_depend>
+  <export><build_type>ament_python</build_type></export>
+</package>

@@ -1,0 +1,18 @@
+# 빌드·설치 결과, 로그, Python 캐시와 생성된 지도 등을 Git 추적 대상에서 제외합니다.
+
+build/
+install/
+log/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+maps/
+
+# vcstool로 받아오는 외부 드라이버 소스 (dependencies.repos에 커밋 고정됨)
+src/ydlidar_sdk/
+src/ydlidar_ros2_driver/
+
+# VSCode C++ 인덱스 캐시
+.vscode/browse.vc.db*
+.vscode/ipch/
