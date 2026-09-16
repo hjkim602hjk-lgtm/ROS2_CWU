@@ -16,7 +16,7 @@
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>ament_index_python</exec_depend>
-  <exec_depend>slam_toolbox</exec_depend>
+  <!-- SLAM Toolbox·Cartographer는 선택 설치합니다. 백엔드별 설치 명령은 README 3.3절을 따릅니다. -->
   <exec_depend>nav2_map_server</exec_depend>
   <exec_depend>rviz2</exec_depend>
   <exec_depend>python3-yaml</exec_depend>

@@ -1,8 +1,10 @@
 # 가상 SLAM 검증 전체를 자동 실행하는 스크립트입니다.
 # 데모 시작 → slam_smoke 검사 → Nav2 map saver로 지도 저장 → PGM/YAML 확인 → 데모 종료를 수행합니다.
-# 지도와 로그는 /tmp/cwu-slam-check-*에 보관하며 실제 하드웨어는 필요하지 않습니다.
+# --backend로 SLAM Toolbox 또는 Cartographer 전용 런치를 선택해 같은 입력으로 검사합니다.
+# 지도와 로그는 /tmp/cwu-<backend>-check-*에 보관하며 실제 하드웨어는 필요하지 않습니다.
 
 """Start isolated demo, verify live map/TF, save a map, and stop owned processes."""
+import argparse
 import os
 from pathlib import Path
 import signal
@@ -13,15 +15,19 @@ import yaml
 
 
 def main():
+    parser = argparse.ArgumentParser(description='백엔드별 가상 SLAM 지도·TF·저장 검사')
+    parser.add_argument('--backend', choices=['slam_toolbox', 'cartographer'],
+                        default='slam_toolbox')
+    backend = parser.parse_args().backend
     env = dict(os.environ, ROS_LOCALHOST_ONLY='1')
     env.setdefault('ROS_DOMAIN_ID', '67')
-    directory = Path(tempfile.mkdtemp(prefix='cwu-slam-check-'))
+    directory = Path(tempfile.mkdtemp(prefix=f'cwu-{backend}-check-'))
     env['ROS_LOG_DIR'] = str(directory / 'ros-log')
     logfile = directory / 'launch.log'
     print(f'Check artifacts: {directory}', flush=True)
     with logfile.open('w') as output:
         launch = subprocess.Popen(
-            ['ros2', 'launch', 'cwu_slam', 'demo.launch.py'],
+            ['ros2', 'launch', 'cwu_slam', f'{backend}.launch.py', 'demo:=true'],
             env=env, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
         try:
             subprocess.run(['python3', str(Path(__file__).with_name('slam_smoke.py'))],

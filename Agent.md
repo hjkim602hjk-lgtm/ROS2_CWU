@@ -1,3 +1,11 @@
+---
+title: 프로젝트 개발 원칙
+aliases:
+  - 개발 원칙
+tags:
+  - cwu/guidelines
+---
+
 # Autonomous Robot Competition Project
 
 ## Project Goal
@@ -15,7 +23,34 @@ The competition rules in `docs/competition_rules.md` are the source of truth for
 * Raspberry Pi 4 4GB as the onboard computer
 * Python is preferred for ROS 2 nodes unless performance requires C++
 * YDLIDAR G4
-* Intel RealSense depth camera
+* Intel RealSense depth camera — used for colour only (see Confirmed Camera Role)
+* PSD distance sensor mounted on the gripper (model and interface not yet confirmed)
+
+## Confirmed Camera Role
+
+* The camera does not measure depth. Use the colour image only.
+* Its single job is to report which way the target lies, as a direction in the camera optical frame.
+* Control keeps the target on the vertical centre line of the image: turn to null the horizontal
+  error, and drive forward only once aligned.
+* Distance is the gripper PSD's job, not the camera's. Do not reintroduce depth thresholds for
+  approach, deceleration, or stopping.
+* Do not publish a 3D target position. Without depth there is no distance to publish, and a pose
+  message would invite consumers to treat an invented number as a coordinate.
+* Camera mounting pitch is now a functional requirement, not a cosmetic one: if the target leaves
+  the frame, the approach controller has no input at all. Measure it.
+* Follow [[docs/superpowers/specs/2026-09-16-mission1-control-design|mission 1 control design]]
+  for the interfaces and the state machine.
+
+## Confirmed Gripper Behavior
+
+* Mount the PSD sensor on the gripper. Automatically grasp when an object enters the configured detection distance.
+* Use the same PSD sensor and gripper hardware in both missions.
+* Keep target identification/approach and PSD proximity detection as separate responsibilities.
+* Integration draft: enable automatic grasping only during target acquisition, stop the base before closing, and reject invalid or stale PSD readings.
+* Proximity detection triggers grasping; it does not prove target identity or successful retention. Verify actual retention separately.
+* Store calibrated detection distance and timing thresholds in YAML before the arena is revealed.
+* Do not invent the PSD model, wiring, distance conversion, trigger distance, actuator limits, or MCU protocol. PSD/gripper control is not implemented yet.
+* Follow [[docs/superpowers/specs/2026-09-16-psd-gripper-design|PSD automatic grasp design draft]] for the proposed integration.
 
 ## Mandatory Competition Constraints
 
@@ -63,7 +98,7 @@ The robot must autonomously:
 * avoid obstacles,
 * locate the target,
 * approach the target,
-* acquire it,
+* acquire it using PSD-triggered automatic grasping,
 * transport it to its own starting location.
 
 The system must not depend on a pre-built arena map.
@@ -79,7 +114,7 @@ The target is located near the center of the arena.
 The robot should be capable of:
 
 * detecting the target,
-* acquiring and retaining the target,
+* acquiring the target using PSD-triggered automatic grasping and retaining it,
 * detecting nearby robots,
 * responding to physical interaction,
 * preventing itself from entering elimination corner regions.
@@ -94,13 +129,13 @@ Recommended modules:
 
 * sensor drivers
 * LiDAR processing
-* depth camera processing
+* colour camera processing
 * localization
 * mapping
 * navigation
 * target detection
 * target tracking
-* target manipulation
+* gripper PSD input and target manipulation
 * opponent detection
 * mission state machine
 * safety supervisor
@@ -136,3 +171,37 @@ Whenever relevant, run:
 Never assume hardware is available when running automated tests.
 
 Separate hardware-independent logic so it can be tested without the physical robot.
+
+## 역할 분담 — codex(설계) / Claude(검토)
+
+이 프로젝트는 두 에이전트가 분업한다.
+
+**codex = 설계자 (1차)**
+
+* 요구사항을 받아 설계/구현 초안을 작성한다.
+* 산출물은 `docs/superpowers/plans/` 또는 `docs/superpowers/specs/` 의 문서, 혹은 실제 코드 변경.
+* 작업 후 반드시 남길 것: 변경한 파일 목록, 설계 의도 한 줄, 확신이 없는 부분(열린 질문).
+* 스스로 자기 설계를 승인하지 않는다. 검토 전에는 "초안" 상태다.
+
+**Claude = 검토자 (2차)**
+
+* codex 산출물을 받아 검사하고 **직접 수정**한다. 지적만 하고 넘기지 않는다.
+* 검토 순서:
+  1. `docs/competition_rules.md` 위반 여부 — 특히 온보드 연산, 미션 중 외부 통신, 아레나 공개 후 파라미터 수정 금지.
+  2. 실제 동작 여부 — ROS 2 토픽/프레임/QoS 연결, 런치 인자, 빌드.
+  3. 하드웨어 현실성 — Pi 4 4GB 연산량, G4 스펙 범위, 질량/치수 제약.
+  4. 과설계 — 안 쓰는 추상화, 한 번만 쓰이는 인터페이스, 죽은 설정값은 삭제.
+  5. 검증 — `colcon build` + 해당 패키지 테스트. 하드웨어 없이 돌 수 있어야 한다.
+* 보고 형식: `수정함: ... / 남긴 이유: ... / codex가 답해야 할 것: ...`
+* 검토를 통과하지 못한 설계는 "통과했다"고 말하지 않는다. 실행 결과를 근거로 말한다.
+
+**경계**
+
+* codex가 이미 정한 설계를 취향 문제로 다시 쓰지 않는다. 규칙 위반, 동작 불가, 제약 초과, 과설계 — 이 네 가지만 수정 사유다.
+* 근거가 규칙 문서에 있으면 해당 조항을 인용한다.
+
+## 관련 문서
+
+- [[docs/프로젝트 목차|프로젝트 목차]] — 전체 문서와 파일 탐색
+- [[docs/competition_rules|개발 제약의 근거]]
+- [[README|빌드 및 실행 절차]]

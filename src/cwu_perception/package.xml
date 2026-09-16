@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<!-- cwu_perception의 ROS 2 패키지 정보와 실행·테스트 의존성을 선언합니다.
+     D415 컬러 영상에서 빨간 목표물의 방향을 찾아 /target/bearing으로 내보냅니다.
+     깊이는 쓰지 않습니다. 근접 판단은 그리퍼 PSD가 맡습니다. -->
+<package format="3">
+  <name>cwu_perception</name>
+  <version>0.1.0</version>
+  <description>Red target bearing from D415 colour images. No depth.</description>
+  <maintainer email="maintainer@example.com">CWU Robot Team</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_python</buildtool_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>cv_bridge</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <!-- 장착 TF 정의(mount.yaml)와 로더를 cwu_slam과 공유합니다. -->
+  <exec_depend>cwu_slam</exec_depend>
+  <!-- D415 드라이버는 선택 설치입니다: sudo apt install ros-humble-realsense2-camera -->
+  <test_depend>python3-pytest</test_depend>
+  <export><build_type>ament_python</build_type></export>
+</package>

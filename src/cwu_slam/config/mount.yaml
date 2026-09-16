@@ -5,8 +5,36 @@
 # Placeholder identity mount: measure and replace before hardware operation.
 # ROS REP-103: metres, radians; +x forward, +y left, +z up.
 # If the robot URDF publishes this transform, use publish_mount_tf:=false.
+# 측정 방법: 로봇을 평평한 바닥에 두고 base_link 원점(보통 구동축 중심을 바닥에
+# 투영한 점)을 정합니다. 거기서 G4 회전 중심까지의 전방 거리를 x, 왼쪽 거리를 y,
+# 바닥에서의 높이를 z에 넣습니다. G4 케이블이 뒤를 향하도록 정렬했다면 yaw는 0이고,
+# 90도 돌려 달았다면 yaw는 ±pi/2입니다. roll/pitch는 센서가 기울지 않았다면 0입니다.
+# 부호 확인: 로봇 앞 1 m에만 물체를 두고 slam.launch.py를 띄운 뒤 RViz의 /scan에서
+# 그 점이 base_link 정면(+x)에 찍히는지 봅니다. 좌우가 뒤집히면 yaw에 pi를 더합니다.
 #로봇 본체 기준 LIDAR의 장착 위치, 각도
 laser_mount:
+  x: 0.0
+  y: 0.0
+  z: 0.0
+  roll: 0.0
+  pitch: 0.0
+  yaw: 0.0
+
+# 로봇 본체 기준 D415(camera_link)의 장착 위치와 각도입니다.
+# realsense2_camera가 camera_link 아래의 광학 프레임 TF를 스스로 발행하므로
+# 여기서는 base_link → camera_link 하나만 정의합니다.
+# 측정 방법: base_link 원점에서 카메라 앞면 중앙까지의 전방 거리를 x, 왼쪽 거리를 y,
+# 바닥에서의 높이를 z에 넣습니다. 카메라를 정면으로 달았으면 yaw는 0이고,
+# 목표물을 내려다보게 아래로 기울였으면 pitch가 양수입니다.
+# (REP-103: pitch는 +y축 오른손 회전이고, 양수 회전이 +x를 아래로 내립니다.)
+# 부호 확인: 로봇 앞 0.5 m 바닥에 빨간 큐브를 두고 target_detector를 띄운 뒤
+# /target/bearing의 x가 0 부근(정면), 큐브를 오른쪽으로 옮기면 x가 양수인지 봅니다.
+# 검출기는 거리를 내지 않으므로 이 TF로는 방향만 확인할 수 있습니다.
+# pitch는 더 중요합니다: 너무 많이 내리면 먼 목표물이, 너무 적게 내리면 접근 마지막
+# 구간의 목표물이 화면 밖으로 나갑니다. 큐브를 0.3 m와 2 m에 두고 둘 다 보이는
+# 각도를 찾아 넣습니다.
+#로봇 본체 기준 D415의 장착 위치, 각도
+camera_mount:
   x: 0.0
   y: 0.0
   z: 0.0

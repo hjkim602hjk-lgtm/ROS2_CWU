@@ -1,6 +1,6 @@
 # 실제 G4 LiDAR와 SLAM Toolbox를 실행하는 launch 진입점입니다.
-# 엔코더 드라이버는 별도로 실행하여 odom → base_link TF를 제공해야 합니다.
-# port 인자로 센서 포트를 지정하고, start_lidar:=false로 기존 센서 입력을 사용할 수 있습니다.
+# 엔코더 오도메트리(cwu_base)도 함께 띄워 odom → base_link TF를 제공합니다.
+# port는 LiDAR, encoder_port는 엔코더 시리얼 포트이며 start_lidar/start_encoder로 개별 제외합니다.
 
 from cwu_slam.bringup import generate_bringup
 

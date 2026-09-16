@@ -1,5 +1,5 @@
 # cwu_slam Python 패키지의 설치 구성을 정의합니다.
-# launch·YAML·RViz 파일을 ROS 패키지 공유 경로에 설치하고 demo_sensors 실행 명령을 등록합니다.
+# launch·YAML·RViz·웹 UI 파일을 ROS 패키지 공유 경로에 설치하고 demo_sensors 실행 명령을 등록합니다.
 
 from glob import glob
 from setuptools import find_packages, setup
@@ -10,8 +10,9 @@ setup(
         ('share/ament_index/resource_index/packages', ['resource/cwu_slam']),
         ('share/cwu_slam', ['package.xml']),
         ('share/cwu_slam/launch', glob('launch/*.launch.py')),
-        ('share/cwu_slam/config', glob('config/*.yaml')),
+        ('share/cwu_slam/config', glob('config/*.yaml') + glob('config/*.lua')),
         ('share/cwu_slam/rviz', glob('rviz/*.rviz')),
+        ('share/cwu_slam/web', glob('web/*.html')),
     ],
     install_requires=['setuptools'], zip_safe=True,
     maintainer='CWU Robot Team', maintainer_email='maintainer@example.com',

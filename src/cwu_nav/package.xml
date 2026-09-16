@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<!-- cwu_nav의 ROS 2 패키지 정보와 실행 의존성을 선언합니다.
+     Nav2 기성 스택의 설정(YAML)·실행(launch)과, 목표물 방향을 바퀴 속도로 바꾸는
+     시각 서보 노드(target_follower)를 제공합니다. -->
+<package format="3">
+  <name>cwu_nav</name>
+  <version>0.1.0</version>
+  <description>Nav2 configuration and bringup for the 3.6 m arena, plus the visual servo that keeps the target on the image centre line. No custom planners or controllers.</description>
+  <maintainer email="maintainer@example.com">CWU Robot Team</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_python</buildtool_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>cwu_slam</exec_depend>
+  <!-- Nav2 본체는 용량이 커서 선택 설치합니다. 설치 명령은 README 4장을 따릅니다.
+       sudo apt install ros-humble-navigation2 ros-humble-nav2-bringup
+                        ros-humble-nav2-regulated-pure-pursuit-controller -->
+  <test_depend>python3-pytest</test_depend>
+  <export><build_type>ament_python</build_type></export>
+</package>

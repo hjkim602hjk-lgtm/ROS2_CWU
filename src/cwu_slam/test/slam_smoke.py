@@ -63,8 +63,16 @@ def main():
             assert len(scan.ranges) >= 4
             assert abs(scan.angle_max - scan.angle_min -
                        (len(scan.ranges) - 1) * scan.angle_increment) < 1e-5
-            assert all(math.isinf(r) or scan.range_min <= r <= scan.range_max
-                       for r in scan.ranges)
+            # 무효 측정의 표현은 발행자마다 다릅니다. 데모는 inf를 넣지만 실물 G4
+            # 드라이버는 ranges를 0으로 초기화한 뒤 유효한 점만 덮어쓰므로 0.0이 옵니다
+            # (ydlidar_ros2_driver_node.cpp). ydlidar_g4.yaml의 invalid_range_is_inf는
+            # 그 드라이버가 읽기만 하고 쓰지 않아 효과가 없습니다.
+            # LaserScan 규격은 range_min~range_max 밖의 값을 소비자가 버리도록 정의합니다.
+            measured = [r for r in scan.ranges
+                        if not math.isinf(r) and not math.isnan(r) and r > 0.0]
+            assert not any(math.isnan(r) for r in scan.ranges)
+            assert all(scan.range_min <= r <= scan.range_max for r in measured)
+            assert len(measured) >= 4
             age = (node.get_clock().now() - rclpy.time.Time.from_msg(scan.header.stamp)).nanoseconds
             assert 0 <= age < 2_000_000_000, 'Scan is stale'
             print(f'PASS: map={grid.info.width}x{grid.info.height}, '

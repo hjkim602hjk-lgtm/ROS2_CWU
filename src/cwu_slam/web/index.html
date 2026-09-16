@@ -1,0 +1,236 @@
+<!doctype html>
+<!-- 파이에서 돌아가는 SLAM 상태를 폰·노트북 브라우저로 보는 단일 페이지입니다.
+     rosbridge WebSocket에 JSON으로 직접 붙으므로 외부 라이브러리가 없고 오프라인에서 동작합니다.
+     지도·로봇 위치·스캔·토픽 주기를 보여주고 slam_toolbox의 save_map 서비스를 호출합니다. -->
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CWU SLAM</title>
+<style>
+  :root { color-scheme: dark; --bg:#14161a; --panel:#1d2027; --line:#2c313b;
+          --text:#e6e8ec; --dim:#8b93a3; --ok:#4ade80; --bad:#f87171; --accent:#60a5fa; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.5 system-ui, sans-serif; }
+  header { display:flex; align-items:center; gap:.6rem; padding:.7rem 1rem;
+           border-bottom:1px solid var(--line); }
+  header h1 { font-size:1rem; margin:0; font-weight:600; letter-spacing:.02em; }
+  #link { margin-left:auto; font-size:.8rem; color:var(--dim); }
+  main { padding:1rem; max-width:760px; margin:0 auto; display:grid; gap:1rem; }
+  #view { width:100%; aspect-ratio:1; background:#0d0f12; border:1px solid var(--line);
+          border-radius:8px; image-rendering:pixelated; touch-action:none; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:.9rem; }
+  table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+  td { padding:.25rem 0; }
+  td:first-child { color:var(--dim); width:8rem; }
+  .topics { display:flex; flex-wrap:wrap; gap:.5rem 1rem; margin-top:.7rem;
+            padding-top:.7rem; border-top:1px solid var(--line); }
+  .topic { display:flex; align-items:center; gap:.4rem; font-size:.85rem; }
+  .dot { width:.55rem; height:.55rem; border-radius:50%; background:var(--bad); }
+  .dot.live { background:var(--ok); }
+  .topic span { color:var(--dim); font-variant-numeric:tabular-nums; }
+  form { display:flex; gap:.5rem; flex-wrap:wrap; }
+  input { flex:1 1 14rem; min-width:0; background:#0d0f12; color:var(--text);
+          border:1px solid var(--line); border-radius:6px; padding:.5rem .6rem; font:inherit; }
+  button { background:var(--accent); color:#0d0f12; border:0; border-radius:6px;
+           padding:.5rem 1rem; font:inherit; font-weight:600; cursor:pointer; }
+  button:disabled { background:var(--line); color:var(--dim); cursor:not-allowed; }
+  #result { margin-top:.6rem; color:var(--dim); font-size:.85rem; min-height:1.2em; }
+  .hint { color:var(--dim); font-size:.8rem; margin:.6rem 0 0; }
+</style>
+</head>
+<body>
+<header>
+  <span class="dot" id="conn"></span>
+  <h1>CWU SLAM</h1>
+  <span id="link">연결 중…</span>
+</header>
+
+<main>
+  <canvas id="view" width="400" height="400"></canvas>
+
+  <div class="panel">
+    <table>
+      <tr><td>지도</td><td id="grid">—</td></tr>
+      <tr><td>위치 (map)</td><td id="pos">—</td></tr>
+      <tr><td>방향</td><td id="yaw">—</td></tr>
+      <tr><td>오도메트리</td><td id="odom">—</td></tr>
+    </table>
+    <div class="topics" id="topics"></div>
+  </div>
+
+  <div class="panel">
+    <form id="save">
+      <input id="path" value="maps/current" aria-label="지도 저장 경로">
+      <button type="submit">지도 저장</button>
+    </form>
+    <p id="result"></p>
+    <p class="hint">상대 경로는 slam_toolbox를 실행한 디렉터리 기준입니다.
+      저장 결과는 <code>.pgm</code>과 <code>.yaml</code> 두 파일입니다.</p>
+  </div>
+</main>
+
+<script>
+// rosbridge 프로토콜은 JSON 한 줄이라 roslib.js 없이 WebSocket으로 직접 말합니다.
+// 라이브러리를 벤더링하지 않으므로 경기장처럼 인터넷이 없는 곳에서도 그대로 뜹니다.
+const TOPICS = [
+  ['/map',   'nav_msgs/msg/OccupancyGrid',                    1000],
+  ['/pose',  'geometry_msgs/msg/PoseWithCovarianceStamped',    100],
+  ['/scan',  'sensor_msgs/msg/LaserScan',                      200],
+  ['/odom',  'nav_msgs/msg/Odometry',                          200],
+];
+const seen = {};      // 토픽별 마지막 수신 시각과 최근 도착 시각들
+const view = document.getElementById('view');
+const paint = view.getContext('2d');
+let map = null, pose = null, scan = null, socket = null;
+
+for (const [topic] of TOPICS) {
+  seen[topic] = { last: 0, times: [] };
+  document.getElementById('topics').insertAdjacentHTML('beforeend',
+    `<div class="topic"><span class="dot" id="dot${topic}"></span>${topic}
+     <span id="hz${topic}">—</span></div>`);
+}
+
+function connect() {
+  socket = new WebSocket(`ws://${location.hostname}:9090`);
+  socket.onopen = () => {
+    setStatus(true, `ws://${location.hostname}:9090`);
+    for (const [topic, type, throttle] of TOPICS)
+      send({ op: 'subscribe', topic, type, throttle_rate: throttle, queue_length: 1 });
+  };
+  socket.onclose = () => { setStatus(false, '끊김 — 재연결 중…'); setTimeout(connect, 2000); };
+  socket.onerror = () => socket.close();
+  socket.onmessage = (event) => {
+    const frame = JSON.parse(event.data);
+    if (frame.op === 'publish') receive(frame.topic, frame.msg);
+    else if (frame.op === 'service_response') showResult(frame);
+  };
+}
+
+function send(payload) {
+  if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(payload));
+}
+
+function setStatus(live, text) {
+  document.getElementById('conn').classList.toggle('live', live);
+  document.getElementById('link').textContent = text;
+  document.querySelector('#save button').disabled = !live;
+}
+
+function receive(topic, msg) {
+  const now = performance.now();
+  const record = seen[topic];
+  record.last = now;
+  record.times.push(now);
+  if (record.times.length > 20) record.times.shift();
+
+  if (topic === '/map') map = msg;
+  else if (topic === '/pose') pose = msg.pose.pose;
+  else if (topic === '/scan') scan = msg;
+  else if (topic === '/odom') {
+    const p = msg.pose.pose.position;
+    document.getElementById('odom').textContent =
+      `x ${p.x.toFixed(3)}  y ${p.y.toFixed(3)}  m`;
+  }
+  if (topic !== '/odom') draw();
+}
+
+function yawOf(q) { return Math.atan2(2 * (q.w * q.z + q.x * q.y),
+                                      1 - 2 * (q.y * q.y + q.z * q.z)); }
+
+function draw() {
+  if (!map) return;
+  const { width, height, resolution, origin } = map.info;
+  document.getElementById('grid').textContent =
+    `${width} x ${height} 칸, ${resolution.toFixed(3)} m/칸`;
+
+  // 점유 격자는 y가 위로 증가하고 캔버스는 아래로 증가하므로 행을 뒤집어 그립니다.
+  const image = paint.createImageData(width, height);
+  for (let i = 0; i < map.data.length; i++) {
+    const value = map.data[i];
+    const shade = value < 0 ? 34 : Math.round(255 - value * 2.2);
+    const row = height - 1 - Math.floor(i / width);
+    const at = (row * width + (i % width)) * 4;
+    image.data[at] = image.data[at + 1] = image.data[at + 2] = shade;
+    image.data[at + 3] = 255;
+  }
+  // OffscreenCanvas는 구형 모바일 사파리에 없어 일반 캔버스를 씁니다.
+  const buffer = Object.assign(document.createElement('canvas'), { width, height });
+  buffer.getContext('2d').putImageData(image, 0, 0);
+
+  view.width = view.height = Math.max(width, height) * 4;
+  paint.imageSmoothingEnabled = false;
+  paint.fillStyle = '#0d0f12';
+  paint.fillRect(0, 0, view.width, view.height);
+  const scale = view.width / Math.max(width, height);
+  paint.drawImage(buffer, 0, 0, width * scale, height * scale);
+
+  if (!pose) return;
+  const toPixels = (x, y) => [(x - origin.position.x) / resolution * scale,
+                              (height - (y - origin.position.y) / resolution) * scale];
+  const [px, py] = toPixels(pose.position.x, pose.position.y);
+  const heading = yawOf(pose.orientation);
+
+  if (scan) {
+    // ponytail: 스캔을 base_link 위치에 그립니다. base_link -> laser_frame 장착
+    // 오프셋(보통 10 cm 미만)만큼 어긋나므로 모니터링용으로만 쓰십시오.
+    // 정확한 겹침이 필요해지면 /tf_static을 구독해 오프셋을 합성하면 됩니다.
+    paint.fillStyle = '#60a5fa';
+    for (let i = 0; i < scan.ranges.length; i++) {
+      const range = scan.ranges[i];
+      if (!(range >= scan.range_min && range <= scan.range_max)) continue;
+      const angle = heading + scan.angle_min + i * scan.angle_increment;
+      const [sx, sy] = toPixels(pose.position.x + range * Math.cos(angle),
+                                pose.position.y + range * Math.sin(angle));
+      paint.fillRect(sx - 1, sy - 1, 2, 2);
+    }
+  }
+
+  paint.translate(px, py);
+  paint.rotate(-heading);
+  paint.fillStyle = '#f87171';
+  paint.beginPath();
+  paint.moveTo(11, 0); paint.lineTo(-7, 7); paint.lineTo(-7, -7);
+  paint.closePath(); paint.fill();
+  paint.setTransform(1, 0, 0, 1, 0, 0);
+
+  document.getElementById('pos').textContent =
+    `x ${pose.position.x.toFixed(3)}  y ${pose.position.y.toFixed(3)}  m`;
+  document.getElementById('yaw').textContent = `${(heading * 180 / Math.PI).toFixed(1)}°`;
+}
+
+// 주기 표시는 화면 갱신과 분리합니다. 토픽이 끊기면 점이 꺼져야 하기 때문입니다.
+setInterval(() => {
+  const now = performance.now();
+  for (const [topic] of TOPICS) {
+    const record = seen[topic];
+    const live = now - record.last < 2000;
+    document.getElementById(`dot${topic}`).classList.toggle('live', live);
+    const span = record.times.filter(t => now - t < 3000);
+    document.getElementById(`hz${topic}`).textContent =
+      live && span.length > 1
+        ? (1000 * (span.length - 1) / (span[span.length - 1] - span[0])).toFixed(1) + ' Hz'
+        : '—';
+  }
+}, 500);
+
+document.getElementById('save').addEventListener('submit', (event) => {
+  event.preventDefault();
+  document.getElementById('result').textContent = '저장 중…';
+  send({ op: 'call_service', service: '/slam_toolbox/save_map',
+         type: 'slam_toolbox/srv/SaveMap',
+         args: { name: { data: document.getElementById('path').value } } });
+});
+
+function showResult(frame) {
+  // SaveMap은 0이 성공입니다. rosbridge는 서비스 자체가 실패하면 result:false로 답합니다.
+  document.getElementById('result').textContent =
+    frame.result === false ? `실패: ${frame.values}`
+    : frame.values && frame.values.result === 0 ? '저장했습니다 (.pgm + .yaml)'
+    : `실패: 코드 ${frame.values ? frame.values.result : '?'} — 지도가 아직 없을 수 있습니다`;
+}
+
+connect();
+</script>
+</body>
+</html>

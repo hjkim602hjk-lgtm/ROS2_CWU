@@ -1,0 +1,61 @@
+# Intel RealSense D415 드라이버 설정입니다. 노드 이름·네임스페이스와 무관하게
+# 적용되도록 /** 와일드카드를 씁니다.
+#
+# 이 설정의 목적은 하나입니다: Pi 4 4GB에서 SLAM·Nav2와 "동시에" 돌아가는 것.
+# 그래서 해상도·프레임률을 낮추고 깊이 스트림과 후처리 필터를 모두 껐습니다.
+# 목표물은 50 mm 큐브 하나이고 검출은 HSV 마스크라 고해상도가 필요 없습니다.
+#
+# 깊이를 끈 이유: 카메라의 역할이 "목표물이 어느 쪽인가"로 한정됐습니다. 접근 제어는
+# 컬러 영상의 좌우 오차로 하고, 근접 판단은 그리퍼 PSD가 합니다. 깊이 스트림과 정렬은
+# Pi 4에서 가장 비싼 항목이므로 쓰지 않는 것을 켜 둘 이유가 없습니다.
+# 되돌리려면 enable_depth와 align_depth.enable 두 플래그입니다(경기장 공개 전에만).
+#
+# 파라미터 이름은 realsense2_camera 4.56 이상 기준입니다.
+# 4.55 이하를 쓰면 color_profile → profile 로 바꿉니다.
+
+/**:
+  ros__parameters:
+    enable_color: true
+    enable_depth: false
+    # D415에는 IMU가 없습니다. 적외선 스트림은 쓰지 않으므로 대역폭만 낭비합니다.
+    enable_infra1: false
+    enable_infra2: false
+    enable_gyro: false
+    enable_accel: false
+
+    rgb_camera:
+      # 424x240x15. 실측 후 검출 유효 거리가 모자라면 480x270x15 → 640x360x15 순으로
+      # 올리고, 그때마다 Nav2·SLAM 동시 실행 CPU를 다시 잽니다 (계획 Phase 2 리스크 1번).
+      color_profile: 424x240x15
+      # ── 경기장 공개 전에 반드시 고정할 값 ──────────────────────────────
+      # 규정상 경기장 공개 후에는 파라미터를 못 고칩니다(규정 2.3). 자동 노출·
+      # 자동 화이트밸런스를 켠 채로 들어가면 조명이 바뀔 때 HSV 임계가 흔들려도
+      # 손댈 방법이 없습니다. 아래를 false로 바꾸고 실측 노출·색온도를 넣어야 합니다.
+      #   1) 경기장과 같은 회색 바닥·조명에서 큐브를 놓고 자동 노출로 촬영
+      #   2) ros2 param get /camera/camera rgb_camera.exposure 로 수렴값 확인
+      #   3) 그 값을 exposure에 넣고 enable_auto_exposure: false 로 고정
+      # 측정 전에 임의의 노출값을 넣으면 화면이 까맣게 나와 더 나쁩니다.
+      # 지금은 미측정이므로 자동을 켜 둡니다.
+      enable_auto_exposure: true
+      enable_auto_white_balance: true
+
+    # 깊이를 쓰지 않으므로 정렬도 필요 없습니다.
+    align_depth:
+      enable: false
+    # 포인트클라우드는 Pi 4에서 가장 비싼 항목이고, 깊이 없이는 의미도 없습니다.
+    # Nav2 코스트맵은 G4만 씁니다.
+    pointcloud:
+      enable: false
+    # 깊이 후처리 필터입니다. 깊이가 꺼져 있으면 아무것도 하지 않습니다.
+    decimation_filter:
+      enable: false
+    spatial_filter:
+      enable: false
+    temporal_filter:
+      enable: false
+
+    # 스트림이 컬러 하나뿐이라 맞출 짝이 없습니다.
+    enable_sync: false
+    # D415를 Pi USB에 물리면 재부팅 후 첫 열기가 실패하는 일이 잦습니다.
+    # 시작할 때 한 번 리셋하면 대부분 사라집니다. 부팅이 2~3초 느려집니다.
+    initial_reset: true

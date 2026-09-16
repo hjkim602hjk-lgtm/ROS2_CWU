@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<!-- cwu_base의 ROS 2 패키지 정보와 실행·테스트 의존성을 선언합니다.
+     엔코더 시리얼을 읽어 오도메트리를 발행하는 로봇 베이스 계층입니다. -->
+<package format="3">
+  <name>cwu_base</name>
+  <version>0.1.0</version>
+  <description>Differential-drive encoder odometry for the onboard SLAM stack.</description>
+  <maintainer email="maintainer@example.com">CWU Robot Team</maintainer>
+  <license>Apache-2.0</license>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>python3-serial</exec_depend>
+  <test_depend>python3-pytest</test_depend>
+  <export><build_type>ament_python</build_type></export>
+</package>
