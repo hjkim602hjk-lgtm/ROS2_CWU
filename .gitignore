@@ -16,3 +16,4 @@ src/ydlidar_ros2_driver/
 # VSCode C++ 인덱스 캐시
 .vscode/browse.vc.db*
 .vscode/ipch/
+.pio/

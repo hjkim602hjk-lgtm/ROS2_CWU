@@ -1,0 +1,240 @@
+// ======================================================
+// Changwon Robot - NUCLEO-F446RE
+// Motor + Encoder integrated test firmware
+//
+// Commands from Raspberry Pi over USB Serial:
+//   f : forward
+//   b : backward
+//   l : left turn (pivot)
+//   r : right turn (pivot)
+//   s : stop
+//   z : encoder zero
+//   1 : left motor only
+//   2 : right motor only
+//
+// Serial output:
+//   ENC,<left_count>,<right_count>
+//
+// Final wiring used on 2026-09-29:
+//   Left motor  DIR=D8, PWM=D9
+//   Right motor DIR=D7, PWM=D6
+//   Left encoder  A=D5,  B=D4
+//   Right encoder A=D10, B=D3   // PB7 was not counting
+// ======================================================
+
+const int L_DIR = D8;
+const int L_PWM = D9;
+
+const int R_DIR = D7;
+const int R_PWM = D6;
+
+const int ENC_L_A = D5;
+const int ENC_L_B = D4;
+
+const int ENC_R_A = D10;
+const int ENC_R_B = D3;
+
+volatile long encL = 0;
+volatile long encR = 0;
+
+// Physical mounting required left motor direction inversion.
+bool FLIP_L = true;
+bool FLIP_R = false;
+
+const int TEST_PWM = 100;
+
+// Safety: stop if no motion command arrives within this window.
+// The Pi must resend the current command faster than this (e.g. every 100 ms).
+// Covers a crashed Pi, a pulled cable, and a hung ST-Link serial bridge
+// (seen on 2026-09-29 during a loaded pivot turn).
+const unsigned long CMD_TIMEOUT_MS = 300;
+unsigned long lastMotionCmd = 0;
+bool moving = false;
+
+// Soft start: commands set a target; loop() slews the output toward it.
+// A full-PWM step at motor start dropped/garbled serial bytes and hung the
+// ST-Link on a loaded pivot (2026-09-29). Stop and timeout remain immediate.
+const int RAMP_STEP = 4;             // PWM per RAMP_PERIOD_MS: 0 -> 100 in ~250 ms
+const unsigned long RAMP_PERIOD_MS = 10;
+int targetL = 0, targetR = 0, outL = 0, outR = 0;
+
+void drive(int left, int right)
+{
+  targetL = left;
+  targetR = right;
+}
+
+void leftEncoderISR()
+{
+  bool A = digitalRead(ENC_L_A);
+  bool B = digitalRead(ENC_L_B);
+
+  if (A == B) encL++;
+  else        encL--;
+}
+
+void rightEncoderISR()
+{
+  bool A = digitalRead(ENC_R_A);
+  bool B = digitalRead(ENC_R_B);
+
+  if (A == B) encR++;
+  else        encR--;
+}
+
+void setLeftMotor(int speed)
+{
+  speed = constrain(speed, -255, 255);
+
+  if (FLIP_L) speed = -speed;
+
+  if (speed > 0) {
+    digitalWrite(L_DIR, HIGH);
+    analogWrite(L_PWM, speed);
+  }
+  else if (speed < 0) {
+    digitalWrite(L_DIR, LOW);
+    analogWrite(L_PWM, -speed);
+  }
+  else {
+    analogWrite(L_PWM, 0);
+  }
+}
+
+void setRightMotor(int speed)
+{
+  speed = constrain(speed, -255, 255);
+
+  if (FLIP_R) speed = -speed;
+
+  if (speed > 0) {
+    digitalWrite(R_DIR, HIGH);
+    analogWrite(R_PWM, speed);
+  }
+  else if (speed < 0) {
+    digitalWrite(R_DIR, LOW);
+    analogWrite(R_PWM, -speed);
+  }
+  else {
+    analogWrite(R_PWM, 0);
+  }
+}
+
+void stopMotor()
+{
+  targetL = targetR = outL = outR = 0;
+  setLeftMotor(0);
+  setRightMotor(0);
+}
+
+void setup()
+{
+  Serial.begin(115200);
+
+  pinMode(L_DIR, OUTPUT);
+  pinMode(L_PWM, OUTPUT);
+  pinMode(R_DIR, OUTPUT);
+  pinMode(R_PWM, OUTPUT);
+
+  pinMode(ENC_L_A, INPUT_PULLUP);
+  pinMode(ENC_L_B, INPUT_PULLUP);
+  pinMode(ENC_R_A, INPUT_PULLUP);
+  pinMode(ENC_R_B, INPUT_PULLUP);
+
+  attachInterrupt(digitalPinToInterrupt(ENC_L_A), leftEncoderISR, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(ENC_R_A), rightEncoderISR, CHANGE);
+
+  stopMotor();
+
+  Serial.println("CHANGWON ROBOT READY");
+}
+
+void loop()
+{
+  if (Serial.available())
+  {
+    char cmd = Serial.read();
+
+    if (cmd && strchr("fblr12", cmd)) {
+      lastMotionCmd = millis();
+      moving = true;
+    }
+    else if (cmd == 's') {
+      moving = false;
+    }
+
+    if (cmd == 'f') {
+      drive(TEST_PWM, TEST_PWM);
+      Serial.println("CMD: FORWARD");
+    }
+    else if (cmd == 'b') {
+      drive(-TEST_PWM, -TEST_PWM);
+      Serial.println("CMD: BACKWARD");
+    }
+    else if (cmd == 'l') {
+      drive(-TEST_PWM, TEST_PWM);
+      Serial.println("CMD: LEFT");
+    }
+    else if (cmd == 'r') {
+      drive(TEST_PWM, -TEST_PWM);
+      Serial.println("CMD: RIGHT");
+    }
+    else if (cmd == 's') {
+      stopMotor();
+      Serial.println("CMD: STOP");
+    }
+    else if (cmd == 'z') {
+      noInterrupts();
+      encL = 0;
+      encR = 0;
+      interrupts();
+      Serial.println("CMD: ENCODER ZERO");
+    }
+    else if (cmd == '1') {
+      drive(TEST_PWM, 0);
+      Serial.println("CMD: LEFT MOTOR ONLY");
+    }
+    else if (cmd == '2') {
+      drive(0, TEST_PWM);
+      Serial.println("CMD: RIGHT MOTOR ONLY");
+    }
+  }
+
+  if (moving && millis() - lastMotionCmd > CMD_TIMEOUT_MS)
+  {
+    stopMotor();
+    moving = false;
+    Serial.println("CMD: TIMEOUT STOP");
+  }
+
+  static unsigned long lastRamp = 0;
+
+  if (millis() - lastRamp >= RAMP_PERIOD_MS)
+  {
+    lastRamp = millis();
+    outL += constrain(targetL - outL, -RAMP_STEP, RAMP_STEP);
+    outR += constrain(targetR - outR, -RAMP_STEP, RAMP_STEP);
+    setLeftMotor(outL);
+    setRightMotor(outR);
+  }
+
+  static unsigned long previous = 0;
+
+  if (millis() - previous >= 100)
+  {
+    previous = millis();
+
+    long leftCount;
+    long rightCount;
+
+    noInterrupts();
+    leftCount = encL;
+    rightCount = encR;
+    interrupts();
+
+    Serial.print("ENC,");
+    Serial.print(leftCount);
+    Serial.print(",");
+    Serial.println(rightCount);
+  }
+}

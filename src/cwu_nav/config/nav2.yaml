@@ -197,13 +197,7 @@ behavior_server:
     local_footprint_topic: local_costmap/published_footprint
     global_costmap_topic: global_costmap/costmap_raw
     global_footprint_topic: global_costmap/published_footprint
-    behavior_plugins: [spin, backup, drive_on_heading, wait]
-    spin:
-      plugin: nav2_behaviors/Spin
-    backup:
-      plugin: nav2_behaviors/BackUp
-    drive_on_heading:
-      plugin: nav2_behaviors/DriveOnHeading
+    behavior_plugins: [wait]
     wait:
       plugin: nav2_behaviors/Wait
     simulate_ahead_time: 2.0
@@ -230,10 +224,33 @@ velocity_smoother:
     feedback: OPEN_LOOP
     # 차동구동: y는 항상 0. 상한은 controller_server와 같은 값을 유지합니다.
     max_velocity: [0.26, 0.0, 1.0]
-    min_velocity: [-0.26, 0.0, -1.0]
+    min_velocity: [0.0, 0.0, -1.0]
     max_accel: [1.0, 0.0, 2.0]
     max_decel: [-1.5, 0.0, -2.0]
     odom_topic: /odom
     odom_duration: 0.1
     deadband_velocity: [0.0, 0.0, 0.0]
-    velocity_timeout: 1.0
+    velocity_timeout: 0.2
+
+# Synthetic fixture only. Real drive replaces points from measured motor.yaml.
+collision_monitor:
+  ros__parameters:
+    base_frame_id: base_link
+    odom_frame_id: odom
+    cmd_vel_in_topic: /cmd_vel
+    cmd_vel_out_topic: /cmd_vel_safe
+    transform_tolerance: 0.1
+    source_timeout: 0.3
+    base_shift_correction: false
+    stop_pub_timeout: 0.2
+    polygons: [Stop]
+    Stop:
+      type: polygon
+      points: [0.32, 0.32, 0.32, -0.32, -0.32, -0.32, -0.32, 0.32]
+      action_type: stop
+      max_points: 0
+      visualize: false
+    observation_sources: [scan]
+    scan:
+      type: scan
+      topic: /scan

@@ -1,0 +1,40 @@
+# DRAFT: leave both confirmations false until measured wheel/lidar/stop tests pass.
+# CFG/ACK uses a fresh session on every connection; all units SI except ticks/s.
+motor_bridge:
+  ros__parameters:
+    calibration_confirmed: false
+    mount_calibration_confirmed: false
+    port: /dev/ttyAMA0
+    baud: 115200
+    wheel_radius: 0.04151 # effective, floor 1 m test 2026-09-30 (see encoder.yaml)
+    wheel_separation: 0.20686
+    ticks_per_rev: 3009.5 # provisional mean; repeat 10-turn measurement
+    left_sign: 1.0
+    right_sign: 1.0
+    max_wheel_speed: -1.0
+    kp_left: -1.0
+    ki_left: -1.0
+    kp_right: -1.0
+    ki_right: -1.0
+    pwm_limit: -1
+    max_accel_ticks: -1.0
+    robot_radius: -1.0
+    braking_distance: -1.0
+    safety_margin: -1.0
+    safety_latency: -1.0 # >= command_timeout + .05 + MCU timeout + max(scan,encoder,TF timeout) + .2
+    max_linear_speed: -1.0
+    max_angular_speed: -1.0
+    max_linear_accel: -1.0
+    max_angular_accel: -1.0
+    mcu_timeout_ms: 300
+    command_timeout: 0.2
+    scan_timeout: 0.3
+    encoder_timeout: 0.3
+    tf_timeout: 0.5
+    tf_future_tolerance: 0.2
+    odom_frame: odom
+    base_frame: base_link
+    map_frame: map
+    publish_tf: true
+    pose_covariance: [0.01, 0.01, 0.05]
+    twist_covariance: [0.01, 0.01, 0.05]

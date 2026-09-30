@@ -138,8 +138,37 @@ function receive(topic, msg) {
 function yawOf(q) { return Math.atan2(2 * (q.w * q.z + q.x * q.y),
                                       1 - 2 * (q.y * q.y + q.z * q.z)); }
 
+// SLAM 지도가 아직 없을 때(엔코더 미연결, SLAM 시작 직후)는 스캔만 로봇 기준으로 그립니다.
+// 화면 위쪽이 로봇 정면(+x), 왼쪽이 +y입니다. 원은 1 m 간격입니다.
+// ponytail: laser_frame 그대로 그리므로 장착 yaw가 0이 아니면 그만큼 돌아 보입니다.
+function drawScanOnly() {
+  const size = 400, reach = 4.0, scale = size / 2 / reach, c = size / 2;
+  view.width = view.height = size;
+  paint.fillStyle = '#0d0f12';
+  paint.fillRect(0, 0, size, size);
+  paint.strokeStyle = '#2c313b';
+  for (let r = 1; r <= reach; r++) {
+    paint.beginPath(); paint.arc(c, c, r * scale, 0, 2 * Math.PI); paint.stroke();
+  }
+  document.getElementById('grid').textContent = '지도 없음 — LiDAR 스캔만 표시 (로봇 기준, 원 1 m 간격)';
+  if (scan) {
+    paint.fillStyle = '#60a5fa';
+    for (let i = 0; i < scan.ranges.length; i++) {
+      const range = scan.ranges[i];
+      if (!(range >= scan.range_min && range <= scan.range_max)) continue;
+      const angle = scan.angle_min + i * scan.angle_increment;
+      paint.fillRect(c - range * Math.sin(angle) * scale - 1,
+                     c - range * Math.cos(angle) * scale - 1, 2, 2);
+    }
+  }
+  paint.fillStyle = '#f87171';
+  paint.beginPath();
+  paint.moveTo(c, c - 11); paint.lineTo(c - 7, c + 7); paint.lineTo(c + 7, c + 7);
+  paint.closePath(); paint.fill();
+}
+
 function draw() {
-  if (!map) return;
+  if (!map) return drawScanOnly();
   const { width, height, resolution, origin } = map.info;
   document.getElementById('grid').textContent =
     `${width} x ${height} 칸, ${resolution.toFixed(3)} m/칸`;

@@ -120,17 +120,20 @@ def main():
     env.setdefault('ROS_DOMAIN_ID', '69')
     directory = Path(tempfile.mkdtemp(prefix='cwu-nav2-check-'))
     env['ROS_LOG_DIR'] = str(directory / 'ros-log')
+    # Checker and launched graph must use the same DDS domain/transport.
+    for key in ('ROS_DOMAIN_ID', 'ROS_LOCALHOST_ONLY', 'ROS_LOG_DIR'):
+        os.environ[key] = env[key]
     logfile = directory / 'launch.log'
     print('Check artifacts: %s' % directory, flush=True)
     with logfile.open('w') as output:
         launch = subprocess.Popen(
             ['ros2', 'launch', 'cwu_nav', 'autonomy.launch.py', 'demo:=true',
-             'demo_drive:=cmd_vel', 'camera:=false'],
+             'demo_drive:=cmd_vel', 'camera:=false', 'follow:=false'],
             env=env, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
         try:
             verify(args.goal_timeout)
             assert launch.poll() is None, 'Launch process exited unexpectedly'
-            print('PASS: SLAM → Nav2 → /cmd_vel → 이동 경로가 연결됩니다', flush=True)
+            print('PASS: SLAM → Nav2 → Collision Monitor → /cmd_vel_safe → 이동 경로가 연결됩니다', flush=True)
         finally:
             if launch.poll() is None:
                 # Signal the launcher only; ROS launch forwards SIGINT to its children.

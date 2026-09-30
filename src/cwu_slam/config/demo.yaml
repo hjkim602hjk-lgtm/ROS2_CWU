@@ -20,9 +20,9 @@ demo_sensors:
              1.3, 1.3, 0.9, 1.3,
              0.9, 1.3, 0.9, 0.9]
     # circle이면 아래 path_radius·angular_speed로 원을 돕니다.
-    # cmd_vel이면 /cmd_vel을 적분해 움직이며 Nav2 주행 경로 검증에 씁니다.
+    # cmd_vel이면 /cmd_vel_safe를 적분해 움직이며 Nav2 주행 경로 검증에 씁니다.
     # 런치에서 demo_drive:=cmd_vel로 덮어쓸 수 있습니다.
     drive: circle
-    cmd_vel_topic: /cmd_vel
+    cmd_vel_topic: /cmd_vel_safe
     # 이 시간(초) 동안 명령이 없으면 정지합니다.
     cmd_timeout: 0.5

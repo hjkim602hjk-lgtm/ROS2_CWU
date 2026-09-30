@@ -17,7 +17,7 @@ def generate_launch_description():
     config = Path(get_package_share_directory('cwu_base')) / 'config' / 'encoder.yaml'
     return LaunchDescription([
         DeclareLaunchArgument('encoder_params_file', default_value=str(config)),
-        DeclareLaunchArgument('encoder_port', default_value='/dev/ttyACM0'),
+        DeclareLaunchArgument('encoder_port', default_value='/dev/ttyAMA0'),
         DeclareLaunchArgument('use_sim_time', default_value='false'),
         Node(package='cwu_base', executable='encoder_odom', name='encoder_odom',
              parameters=[LaunchConfiguration('encoder_params_file'), {

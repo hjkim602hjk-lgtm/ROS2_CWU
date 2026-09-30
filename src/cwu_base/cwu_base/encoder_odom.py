@@ -24,6 +24,9 @@ MAX_BUFFER = 65536
 # 늦게까지 한 줄도 못 받으면 설정이 틀린 것으로 봅니다. 이 유예가 없으면
 # 부팅 때마다 오류가 한 줄 뜨고, 사람은 곧 오류 로그를 무시하게 됩니다.
 STARTUP_GRACE = 3.0
+# 펌웨어 ENC 전송 주기(s). 밀린 줄이 두 poll에 나뉘어 들어와 dt가 0에 가까워도
+# 한 주기 분량의 이동은 허용하도록 속도 상한 검사의 dt 하한으로 씁니다.
+SAMPLE_PERIOD = 0.1
 
 
 def latest_sample(lines, left_field, right_field):
@@ -46,12 +49,12 @@ class EncoderOdometry(Node):
     def __init__(self):
         super().__init__('encoder_odom')
         p = self.declare_parameters('', [
-            ('port', '/dev/ttyACM0'), ('baud', 115200),
+            ('port', '/dev/ttyAMA0'), ('baud', 115200),
             ('wheel_radius', UNSET), ('wheel_separation', UNSET),
             ('ticks_per_rev', UNSET),
             ('left_field', -1), ('right_field', -1),
             ('left_sign', 1.0), ('right_sign', 1.0),
-            ('counter_bits', 32), ('timeout', 0.5),
+            ('counter_bits', 32), ('timeout', 0.5), ('max_wheel_speed', 0.5),
             ('odom_frame', 'odom'), ('base_frame', 'base_link'),
             ('publish_tf', True),
             ('pose_covariance', [0.01, 0.01, 0.05]),
@@ -70,7 +73,7 @@ class EncoderOdometry(Node):
         self.odom = self.create_publisher(Odometry, 'odom', 10)
         self.tf = TransformBroadcaster(self)
         self.serial = serial.Serial(
-            self.cfg['port'], self.cfg['baud'], timeout=0)
+            self.cfg['port'], self.cfg['baud'], timeout=0, exclusive=True)
         self.get_logger().info(
             f"엔코더 {self.cfg['port']} @ {self.cfg['baud']} baud, "
             f"필드 L={self.cfg['left_field']} R={self.cfg['right_field']}")
@@ -105,9 +108,9 @@ class EncoderOdometry(Node):
 
     def update(self, left_ticks, right_ticks):
         now = self.get_clock().now()
-        previous, self.ticks, previous_stamp, self.stamp = (
-            self.ticks, (left_ticks, right_ticks), self.stamp, now)
+        previous, previous_stamp = self.ticks, self.stamp
         if previous is None:
+            self.ticks, self.stamp = (left_ticks, right_ticks), now
             return  # 첫 표본은 기준점으로만 씁니다.
         self.warned = False
         bits = self.cfg['counter_bits']
@@ -118,9 +121,17 @@ class EncoderOdometry(Node):
             for was, is_now, sign in (
                 (previous[0], left_ticks, self.cfg['left_sign']),
                 (previous[1], right_ticks, self.cfg['right_sign'])))
+        dt = (now - previous_stamp).nanoseconds / 1e9
+        if max(abs(left), abs(right)) > self.cfg['max_wheel_speed'] * max(dt, SAMPLE_PERIOD):
+            # 모터 잡음으로 숫자 중간 바이트가 빠진 줄(예: 1234 -> 124)도 형식은 맞아
+            # 통과합니다. 적분하면 /odom과 TF가 한 표본 동안 튀고 SLAM이 그 순간을
+            # 쓸 수 있습니다. 기준점을 그대로 두면 다음 정상 줄이 이동을 모두 되찾습니다.
+            self.get_logger().warn(
+                f'엔코더 틱이 속도 상한을 넘어 버렸습니다: {previous} -> {(left_ticks, right_ticks)}')
+            return
+        self.ticks, self.stamp = (left_ticks, right_ticks), now
         self.pose = integrate(self.pose, left, right,
                               self.cfg['wheel_separation'])
-        dt = (now - previous_stamp).nanoseconds / 1e9
         self.publish(now, (left + right) / 2 / dt if dt > 0 else 0.0,
                      (right - left) / self.cfg['wheel_separation'] / dt if dt > 0 else 0.0)
 

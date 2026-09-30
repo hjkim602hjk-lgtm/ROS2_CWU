@@ -23,6 +23,36 @@ def test_negative_ticks_and_field_order():
     assert latest_sample([b'L=-7 R=8'], 1, 0) == (8, -7)
 
 
+def test_nucleo_firmware_lines():
+    # 2026-09-29 팀 펌웨어(changwon_robot_stm.ino)의 실제 출력입니다.
+    # 명령 응답 줄에는 숫자가 없어 건너뛰어야 합니다.
+    lines = [b'CHANGWON ROBOT READY\r', b'ENC,1499,1406\r',
+             b'ENC,-2023,1893\r', b'CMD: FORWARD\r']
+    assert latest_sample(lines, 0, 1) == (-2023, 1893)
+
+
 def test_nothing_usable_returns_none():
     assert latest_sample([], 0, 1) is None
     assert latest_sample([b'', b'BOOT'], 0, 1) is None
+
+
+def test_dropped_digit_does_not_teleport_the_robot(monkeypatch):
+    # 모터 잡음으로 숫자 가운데 바이트가 빠진 줄도 형식은 맞습니다. 그대로 적분하면
+    # /odom이 한 표본 동안 10 cm 튀므로, 속도 상한을 넘는 표본은 버려야 합니다.
+    import rclpy
+
+    from cwu_base import encoder_odom
+    monkeypatch.setattr(encoder_odom.serial, 'Serial', lambda *a, **k: None)
+    rclpy.init(args=['--ros-args', '-p', 'wheel_radius:=0.04265',
+                     '-p', 'wheel_separation:=0.20686', '-p', 'ticks_per_rev:=3009.5',
+                     '-p', 'left_field:=0', '-p', 'right_field:=1'])
+    try:
+        node = encoder_odom.EncoderOdometry()
+        node.update(1234, 5678)
+        node.update(124, 5678)  # 1234에서 '3'이 빠진 줄
+        assert node.pose == (0.0, 0.0, 0.0)  # 적분했다면 10 cm 후진 + 27도 회전
+        node.update(1250, 5694)
+        assert node.pose[0] > 0.001  # 기준점을 지켰으니 정상 이동 1.4 mm를 되찾음
+        node.destroy_node()
+    finally:
+        rclpy.shutdown()

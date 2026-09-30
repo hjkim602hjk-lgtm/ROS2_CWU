@@ -13,7 +13,7 @@ tags:
 ## 프로젝트 개요
 
 **하드웨어**: Nucleo F446RE / 라즈베리파이 4 / 모터 드라이버 Cytron
-**센서**: YDLIDAR G4, Intel RealSense D415, 그리퍼 장착 PSD 거리 센서
+**센서**: YDLIDAR G4, Intel RealSense D415, PSD 거리 센서 4개(정면 그리퍼 1개 + 좌·우·뒤 각 1개)
 **라즈베리파이**: Ubuntu Server 22.04, `ssh ubuntu@raspberrypi.local` (비밀번호는 저장소에 두지 않습니다)
 **개발 환경**: VSCode, 아두이노 측은 PlatformIO 확장 사용 예정
 
@@ -43,12 +43,40 @@ PSD 모델·연결 방식·감지 거리·그리퍼 구동기 사양은 아직 �
 **PSD 입력 및 그리퍼 제어 코드는 아직 미구현**이며, 기존 SLAM launch로 그리퍼가 움직이지 않습니다.
 상태 전이·입출력·실물 확인 항목은 [[docs/superpowers/specs/2026-09-16-psd-gripper-design|PSD 자동 파지 설계 초안]]을 따릅니다.
 
+### PSD 배치 (2026-09-30 확정)
+
+| 위치 | 개수 | 역할 |
+|---|---|---|
+| 정면 그리퍼 | 1 | 자동 파지 시작 조건. **파지를 시작할 수 있는 PSD는 이것 하나뿐** |
+| 좌·우·뒤 | 각 1 (총 3) | 주변 근접 감지. 구체적인 용도·임계값·ROS 인터페이스는 미정 |
+
+PSD 모델과 출력 방식은 아직 미확정입니다. 아날로그 출력이면 Nucleo ADC(A2~A5가 비어 있음)에 연결하는 안을 검토하며,
+출력 전압이 Nucleo 입력 허용 범위(3.3 V) 안인지 먼저 확인합니다.
+
+### Nucleo ↔ Pi 통신: USB → UART 전환 (2026-09-30)
+
+ST-Link USB 시리얼이 모터 잡음으로 반복해서 멈춰([[docs/2026-09-29-실물-주행-시험-기록|실물 주행 시험 기록]]),
+Nucleo 하드웨어 UART를 Pi GPIO UART에 직결합니다. 펌웨어(`platformio.ini`의 `SERIAL_UART_INSTANCE=4`)와 ROS 기본 포트(`/dev/ttyAMA0`)는 바꿨습니다.
+**새 펌웨어 업로드·Pi UART 설정·실물 통신 확인은 아직 안 했습니다.** 새 펌웨어를 올리면 ST-Link USB(`/dev/ttyACM0`)로는 더 이상 데이터가 나오지 않습니다.
+
+| Nucleo-F446RE | | Raspberry Pi 4 |
+|---|---|---|
+| A0 (PA0, UART4 TX) | → | GPIO15 / RXD (10번 핀) |
+| A1 (PA1, UART4 RX) | ← | GPIO14 / TXD (8번 핀) |
+| GND | — | GND (6번 핀) |
+
+- 둘 다 3.3 V 로직이라 레벨 변환기가 필요 없습니다. 전원선(3.3 V/5 V)은 연결하지 않습니다.
+- D3~D10은 모터·엔코더가 쓰므로 USART1(D8/D2)·USART6(PC7=D9)은 쓸 수 없습니다.
+- 펌웨어: 빌드 플래그로 `Serial`을 UART4(RX=PA1, TX=PA0)에 연결하므로 코드는 그대로입니다. 업로드는 계속 USB로 합니다.
+- Pi: `/boot/firmware/config.txt`에 `enable_uart=1`, `dtoverlay=disable-bt` 추가, `cmdline.txt`에서 `console=serial0,115200` 삭제,
+  `sudo systemctl disable hciuart`(있을 때) 후 재부팅 → `/dev/ttyAMA0`. 사용자가 `dialout` 그룹이어야 합니다.
+
 ## 미션 1·2 작동 방식
 
 **정리일: 2026-09-16 / 상태: codex 설계 초안, Claude 검토·실물 검증 전.**
 아래는 구현할 목표 동작입니다. 현재 SLAM·엔코더 처리, Nav2 주행 설정, D415 목표물 검출까지
-연결돼 있고, 모터 제어·안전 정지·PSD 입력·그리퍼 제어·미션 상태머신은 아직 미구현입니다.
-Nav2가 속도를 발행해도 `/cmd_vel`을 모터로 보내는 노드가 없어 실물은 움직이지 않습니다.
+연결돼 있습니다. 모터 연결·안전 정지·MCU PI 제어는 구현 초안이며 실물 검증 전입니다.
+기본 구동은 꺼져 있고 실측 보정 전에는 실행을 거부합니다. PSD·그리퍼·미션 상태머신은 미구현입니다.
 
 ### 공통 센서 역할과 파지 순서
 
@@ -135,8 +163,8 @@ ROS 2 Humble / Ubuntu 22.04 / YDLIDAR G4 / 엔코더 기반 이동 로봇용 구
 SLAM Toolbox 또는 Cartographer가 지도와 위치를 추정합니다. 라즈베리파이 4에서는 센서 드라이버,
 엔코더 오도메트리와 SLAM을 모두 온보드로 실행합니다.
 
-**진행 위치 (2026-09-16): SLAM + Nav2 + D415 인식 연결, 실물 주행 연결 전.**
-모터 제어·안전 정지·PSD 입력·그리퍼 제어·미션 상태머신은 아직 미구현입니다.
+**진행 위치 (2026-09-29): Nav2 → Collision Monitor → 모터·엔코더 연결 구현 초안.**
+실물 주행·정지거리·PI 보정은 미검증입니다. PSD·그리퍼·미션 상태머신은 아직 미구현입니다.
 Nav2 주행은 가상 입력으로 목표 이동·복귀·장애물 회피까지 확인했습니다.
 D415 인식과 정렬 서보는 합성 입력만 확인했고, 실물 센서와 Pi 4 성능은 둘 다 미검증입니다.
 웹 UI는 코드가 있으며 브라우저·파이 동작 재검증이 필요합니다.
@@ -159,12 +187,11 @@ D415 인식과 정렬 서보는 합성 입력만 확인했고, 실물 센서와 
 `base_link → laser_frame` TF가 연결되는 것까지 확인했습니다. 파이 온보드 전체
 빌드는 약 1분 20초입니다(SDK 26s → 드라이버 45s → cwu_slam 6s).
 
-**엔코더 경로는 실물 미검증입니다.** 틱을 `/odom`과 TF로 바꾸는 노드
-(`cwu_base`)는 이제 포함되어 있고 가상 시리얼 포트로 검증했지만, **바퀴 제원과
-시리얼 프로토콜은 실측값이라 비어 있습니다.** `config/encoder.yaml`의 `-1` 항목을
-채우기 전에는 노드가 실행을 거부합니다(추측값으로 조용히 틀린 지도를 만드는 것보다
-낫습니다). 채우는 절차는 [3장](#3-실제-g4--엔코더-연결)에 있습니다. 모터 제어·자율
-탐색·Nav2 주행은 아직 범위 밖입니다.
+**엔코더 보정값은 2026-09-29 팀 측정으로 입력됐습니다.** 반지름 0.04265m,
+트레드 0.20686m, 회전당 평균 틱 3009.5이며 좌우 10회전 재측정이 필요합니다.
+통합 구동은 `motor.yaml`을 사용하고, 엔코더 전용 시험은 `encoder.yaml`을 사용합니다.
+실물 전개 절차·변경 파일·열린 질문은
+[구동 구현 기록](docs/superpowers/plans/2026-09-29-nav2-drive-status.md)에 있습니다.
 
 ## 0. 라즈베리파이 시계 (최초 1회)
 
@@ -339,7 +366,7 @@ python3 tools/sniff_encoder_serial.py          # 포트·보드레이트 자동 
 ```bash
 source /opt/ros/humble/setup.bash
 source ~/ros_CWU/install/setup.bash
-ros2 launch cwu_slam slam.launch.py port:=/dev/ttyUSB0 encoder_port:=/dev/ttyACM0
+ros2 launch cwu_slam slam.launch.py port:=/dev/ttyUSB0 encoder_port:=/dev/ttyAMA0
 ```
 
 `slam.launch.py`가 G4 드라이버, 장착 TF, 엔코더 오도메트리, SLAM Toolbox를 함께 띄웁니다.
@@ -371,7 +398,7 @@ G4 드라이버를 별도로 실행 중이면 `start_lidar:=false`, 엔코더 �
 ```bash
 sudo apt install ros-humble-slam-toolbox
 # 실물: encoder.yaml 및 mount.yaml 실측 설정을 먼저 완료합니다.
-ros2 launch cwu_slam slam_toolbox.launch.py port:=/dev/ttyUSB0 encoder_port:=/dev/ttyACM0
+ros2 launch cwu_slam slam_toolbox.launch.py port:=/dev/ttyUSB0 encoder_port:=/dev/ttyAMA0
 # 장비 없는 데모: 위 실물 런치를 종료한 뒤 실행합니다.
 ros2 launch cwu_slam slam_toolbox.launch.py demo:=true rviz:=true
 # 자동 검증: 데모를 따로 켜지 않고 실행합니다.
@@ -383,7 +410,7 @@ python3 src/cwu_slam/test/run_demo_check.py --backend slam_toolbox
 ```bash
 sudo apt install ros-humble-cartographer-ros
 # 실물: SLAM Toolbox와 같은 센서·엔코더 설정을 사용합니다.
-ros2 launch cwu_slam cartographer.launch.py port:=/dev/ttyUSB0 encoder_port:=/dev/ttyACM0
+ros2 launch cwu_slam cartographer.launch.py port:=/dev/ttyUSB0 encoder_port:=/dev/ttyAMA0
 # 장비 없는 데모: 위 실물 런치를 종료한 뒤 실행합니다.
 ros2 launch cwu_slam cartographer.launch.py demo:=true rviz:=true
 # 자동 검증: 데모를 따로 켜지 않고 실행합니다.
@@ -437,10 +464,10 @@ WebSocket으로 직접 붙습니다. roslib.js 같은 외부 라이브러리를 
 SLAM 위에 Nav2 주행과 D415 목표물 인식·정렬을 올린 구성입니다. 미션 상태머신은 아직 없습니다.
 설계와 인터페이스는 [[docs/superpowers/specs/2026-09-16-mission1-control-design|미션1 제어 설계]]를 따릅니다.
 
-> [!warning] 지금 로봇은 움직이지 않습니다
-> `/cmd_vel`을 모터로 보내는 노드가 없습니다. Nav2는 속도를 계산해 발행하지만
-> 실물 바퀴는 돌지 않습니다. 모터 브리지는 엔코더 실측값(3.1장)이 나온 뒤의 작업입니다.
-> 아래 데모는 가상 로봇으로 **주행 경로가 실제로 연결되는지**만 확인합니다.
+> [!warning] 실물 구동 기본 비활성 · Claude 검토 전 초안
+> `drive:=true`일 때만 `/cmd_vel_safe`를 받는 모터 연결을 실행합니다.
+> `motor.yaml`의 미측정 값과 보정 확인을 먼저 완성해야 합니다. 새 펌웨어는 자동 업로드하지 않습니다.
+> 가상 검사 통과는 실물 정지·주행 합격을 뜻하지 않습니다.
 
 ### 4.1 설치
 
@@ -448,7 +475,7 @@ Nav2와 RealSense는 용량이 커서 코어 의존성에서 제외했습니다.
 
 ```bash
 sudo apt install ros-humble-navigation2 ros-humble-nav2-bringup \
-  ros-humble-nav2-regulated-pure-pursuit-controller
+  ros-humble-nav2-regulated-pure-pursuit-controller ros-humble-nav2-collision-monitor
 sudo apt install ros-humble-realsense2-camera   # D415를 쓸 때만
 ```
 
@@ -458,7 +485,7 @@ sudo apt install ros-humble-realsense2-camera   # D415를 쓸 때만
 cd ~/ros_CWU
 source /opt/ros/humble/setup.bash && source install/setup.bash
 export ROS_LOCALHOST_ONLY=1
-ros2 launch cwu_nav autonomy.launch.py demo:=true camera:=false rviz:=true
+ros2 launch cwu_nav autonomy.launch.py demo:=true camera:=false follow:=false rviz:=true
 ```
 
 가상 센서가 `drive:=cmd_vel` 모드로 돌아 Nav2가 보낸 속도만큼 움직입니다.
@@ -479,7 +506,7 @@ python3 src/cwu_nav/test/run_nav2_check.py
 PASS: (0.93, -0.73) 도달, 오차 0.10 m
 PASS: (0.07, -0.06) 도달, 오차 0.09 m
 PASS: 상자 안 (1.10, 1.10) 주행 거부됨 status=6
-PASS: SLAM → Nav2 → /cmd_vel → 이동 경로가 연결됩니다
+PASS: SLAM → Nav2 → Collision Monitor → /cmd_vel_safe → 이동 경로가 연결됩니다
 ```
 
 마지막 두 줄이 중요합니다. 상자 안 목표가 **성공하면** 코스트맵에 장애물이 안 찍힌 것이고,
@@ -496,7 +523,7 @@ PASS: SLAM → Nav2 → /cmd_vel → 이동 경로가 연결됩니다
 
 ```bash
 ros2 launch cwu_nav autonomy.launch.py \
-  port:=/dev/ttyUSB0 encoder_port:=/dev/ttyACM0
+  port:=/dev/ttyUSB0 encoder_port:=/dev/ttyAMA0
 ```
 
 G4 드라이버, 장착 TF, 엔코더 오도메트리, SLAM Toolbox, Nav2, D415 드라이버,
@@ -504,6 +531,19 @@ G4 드라이버, 장착 TF, 엔코더 오도메트리, SLAM Toolbox, Nav2, D415 
 서보만 빼려면 `follow:=false`입니다.
 Nav2만 따로 띄우려면 `ros2 launch cwu_nav nav2.launch.py`,
 카메라만 따로면 `ros2 launch cwu_perception camera.launch.py`입니다.
+
+실측과 바퀴를 띄운 검증이 끝난 뒤 저속 실물 구동 시험:
+
+```bash
+ros2 launch cwu_nav autonomy.launch.py drive:=true camera:=false follow:=false \
+  encoder_port:=/dev/ttyAMA0 port:=/dev/ttyUSB0
+```
+
+`drive:=true`에서는 엔코더 전용 노드를 제외하고 통합 모터 노드 하나만 포트를 소유합니다.
+카메라·서보·가상 시간·데모와 실물 구동을 함께 켜면 거부합니다.
+읽기 전용 엔코더 노드는 기존 `ENC,left,right` 펌웨어용입니다. 새 펌웨어는 프레임이 다릅니다.
+구동 속도·확장 반경·제동거리·정지 영역은 `motor.yaml`의 실측값에서 함께 적용합니다.
+측정값은 경기장 공개 전에 확정합니다. 위 목표 지정 절차는 개발 시험용이며 경기 중 외부 통신에 의존하지 않습니다.
 
 ### 4.4 D415 카메라 — 방향만 씁니다
 

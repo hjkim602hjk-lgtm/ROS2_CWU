@@ -27,8 +27,7 @@ The competition rules in `docs/competition_rules.md` are the source of truth for
 * Four PSD distance sensors (model and interface not yet confirmed): one on the front-mounted gripper,
   plus one each on the left, right, and rear of the body
 * Nucleo ↔ Pi link is moving from ST-Link USB to a direct UART (Nucleo A0/A1 = UART4 ↔ Pi GPIO14/15),
-  because the USB link repeatedly froze under motor noise. Firmware build flags and ROS default port
-  (`/dev/ttyAMA0`) are changed; upload, Pi UART setup, and on-robot verification are not done yet
+  because the USB link repeatedly froze under motor noise. Firmware and port change not done yet
 
 ## Confirmed Camera Role
 

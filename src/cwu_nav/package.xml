@@ -15,6 +15,10 @@
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>cwu_slam</exec_depend>
+  <exec_depend>cwu_base</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>nav2_collision_monitor</exec_depend>
+  <exec_depend>nav2_lifecycle_manager</exec_depend>
   <!-- Nav2 본체는 용량이 커서 선택 설치합니다. 설치 명령은 README 4장을 따릅니다.
        sudo apt install ros-humble-navigation2 ros-humble-nav2-bringup
                         ros-humble-nav2-regulated-pure-pursuit-controller -->

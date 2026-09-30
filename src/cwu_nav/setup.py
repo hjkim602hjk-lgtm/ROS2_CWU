@@ -10,7 +10,7 @@ setup(
         ('share/ament_index/resource_index/packages', ['resource/cwu_nav']),
         ('share/cwu_nav', ['package.xml']),
         ('share/cwu_nav/launch', glob('launch/*.launch.py')),
-        ('share/cwu_nav/config', glob('config/*.yaml')),
+        ('share/cwu_nav/config', glob('config/*.yaml') + glob('config/*.xml')),
     ],
     install_requires=['setuptools'], zip_safe=True,
     maintainer='CWU Robot Team', maintainer_email='maintainer@example.com',

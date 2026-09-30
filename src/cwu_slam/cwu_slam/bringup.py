@@ -40,6 +40,7 @@ def generate_bringup(demo=False, backend=None):
                                                choices=['true', 'false']))
     if demo is not False:
         arguments.extend([
+            DeclareLaunchArgument('demo_cmd_vel_topic', default_value='/cmd_vel_safe'),
             DeclareLaunchArgument('demo_params_file', default_value=str(config / 'demo.yaml')),
             # circle: 기존 고정 원운동(SLAM 단독 검증용).
             # cmd_vel: Nav2가 보낸 속도로 움직임(주행 경로 전체 검증용).
@@ -52,7 +53,7 @@ def generate_bringup(demo=False, backend=None):
             DeclareLaunchArgument('lidar_params_file', default_value=str(config / 'ydlidar_g4.yaml')),
             DeclareLaunchArgument('port', default_value='/dev/ttyUSB0'),
             DeclareLaunchArgument('start_encoder', default_value='true'),
-            DeclareLaunchArgument('encoder_port', default_value='/dev/ttyACM0'),
+            DeclareLaunchArgument('encoder_port', default_value='/dev/ttyAMA0'),
         ])
 
     def nodes(context):
@@ -81,6 +82,7 @@ def generate_bringup(demo=False, backend=None):
                 parameters=[LaunchConfiguration('demo_params_file'), {
                     'use_sim_time': use_sim_time, 'laser_x': mount['x'],
                     'laser_y': mount['y'], 'laser_yaw': mount['yaw'],
+                    'cmd_vel_topic': LaunchConfiguration('demo_cmd_vel_topic'),
                     'drive': ParameterValue(LaunchConfiguration('demo_drive'),
                                             value_type=str),
                 }], output='screen'))
