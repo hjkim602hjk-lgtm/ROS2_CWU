@@ -17,3 +17,4 @@ src/ydlidar_ros2_driver/
 .vscode/browse.vc.db*
 .vscode/ipch/
 .pio/
+.vscode/

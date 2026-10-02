@@ -12,6 +12,8 @@ tags:
 
 ## 프로젝트 개요
 
+노션 링크: https://app.notion.com/invite/972d858f72a0d7a3db161013a118c949d5c30e4d
+
 **하드웨어**: Nucleo F446RE / 라즈베리파이 4 / 모터 드라이버 Cytron
 **센서**: YDLIDAR G4, Intel RealSense D415, PSD 거리 센서 4개(정면 그리퍼 1개 + 좌·우·뒤 각 1개)
 **라즈베리파이**: Ubuntu Server 22.04, `ssh ubuntu@raspberrypi.local` (비밀번호는 저장소에 두지 않습니다)
