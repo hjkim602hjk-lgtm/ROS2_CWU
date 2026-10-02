@@ -4,6 +4,12 @@
 #
 # 검출 콜백이 아니라 고정 주기로 발행합니다. 목표물이 안 보이게 됐을 때 마지막 명령이
 # 남아 로봇이 계속 도는 것을 막으려면, 표본이 끊긴 것 자체가 0을 만들어야 합니다.
+#
+# [공부 노트] 입력·출력
+#   입력 : /target/bearing (PointStamped) ← target_detector
+#   설정 : config/servo.yaml (k_yaw, max_yaw, align_tol_rad, approach_speed …)
+#   출력 : /cmd_vel_servo (Twist) — 20 Hz 로 계속. 목표가 0.5 s 넘게 안 보이면 0 속도
+#   구조 : 콜백(on_bearing)은 "저장만", 타이머(on_tick)가 "계산+발행" — 입력이 끊겨도 출력은 계속됨
 
 """Visual servo: keep the target on the image centre line."""
 import rclpy
@@ -20,13 +26,14 @@ class TargetFollower(Node):
         defaults = {
             'bearing_topic': '/target/bearing',
             'cmd_topic': '/cmd_vel_servo',
-            'rate_hz': 20.0,
+            'rate_hz': 20.0,                  # 발행 주기
             'k_yaw': 1.2, 'max_yaw': 0.8, 'min_yaw': 0.0,
-            'align_tol_rad': 0.09, 'approach_speed': 0.08,
-            'sample_timeout_s': 0.5,
+            'align_tol_rad': 0.09, 'approach_speed': 0.08,  # 0.09 rad ≈ 5도, 0.08 m/s
+            'sample_timeout_s': 0.5,          # 이보다 오래된 방향은 "안 보임"으로 취급
         }
         self.declare_parameters('', list(defaults.items()))
         self.p = {key: self.get_parameter(key).value for key in defaults}
+        # 설정값 검사 — 0 이나 음수면 제어가 이상해지므로 시작 단계에서 거부
         if self.p['rate_hz'] <= 0 or self.p['sample_timeout_s'] <= 0:
             raise ValueError('rate_hz and sample_timeout_s must be positive')
         if self.p['k_yaw'] <= 0 or self.p['max_yaw'] <= 0:
@@ -36,23 +43,28 @@ class TargetFollower(Node):
         if self.p['align_tol_rad'] <= 0 or self.p['approach_speed'] <= 0:
             raise ValueError('align_tol_rad and approach_speed must be positive')
 
-        self.sample = None
+        self.sample = None  # 가장 최근 방향 메시지
         self.publisher = self.create_publisher(Twist, self.p['cmd_topic'], 10)
         self.create_subscription(PointStamped, self.p['bearing_topic'],
                                  self.on_bearing, 10)
+        # 1/20 = 0.05 s 마다 on_tick
         self.create_timer(1.0 / self.p['rate_hz'], self.on_tick)
+        # % 문자열 포맷: '%s' 자리에 뒤의 값이 들어감 (f-문자열과 같은 역할의 옛 방식)
         self.get_logger().info(
             '시각 서보 시작. %s로 발행하며 모터 연결은 안전 감시자가 정합니다.'
             % self.p['cmd_topic'])
 
+    # 방향이 들어오면 저장만
     def on_bearing(self, msg):
         self.sample = msg
 
+    # 저장된 방향이 몇 초 전 사진에서 나온 것인지 (지금 시각 - 촬영 시각)
     def age_s(self):
         stamp = self.sample.header.stamp
         return self.get_clock().now().nanoseconds * 1e-9 - (
             stamp.sec + stamp.nanosec * 1e-9)
 
+    # 20 Hz: 최신 방향이 있으면 속도 계산, 없거나 오래됐으면 Twist() 기본값 = 전부 0 = 정지
     def on_tick(self):
         command = Twist()
         if self.sample is not None and self.age_s() <= self.p['sample_timeout_s']:

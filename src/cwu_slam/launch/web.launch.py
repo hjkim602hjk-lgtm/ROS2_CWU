@@ -1,6 +1,12 @@
 # 브라우저로 SLAM 상태를 보는 웹 UI를 실행하는 launch 진입점입니다.
 # rosbridge WebSocket 서버(ws_port)와 index.html 정적 파일 서버(http_port)를 함께 띄웁니다.
 # SLAM과 별개 프로세스라 slam.launch.py가 떠 있는 중에 따로 켜고 끌 수 있습니다.
+#
+# [공부 노트] 무엇이 뜨나
+#   ① rosbridge (포트 9090) : ROS 토픽을 웹소켓으로 중계 → 브라우저 JS 가 /map, /scan 을 받음
+#   ② python3 -m http.server (포트 8080) : web/index.html 을 브라우저에 전달
+#   사용: ros2 launch cwu_slam web.launch.py  →  PC 브라우저에서 http://<Pi IP>:8080
+#   ※ 개발 중 확인용. 경기 미션 중에는 외부 통신 금지 규정 때문에 반드시 꺼야 합니다.
 
 """Serve the browser monitoring page and the rosbridge socket it talks to."""
 from pathlib import Path
