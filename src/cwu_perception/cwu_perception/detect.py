@@ -74,7 +74,7 @@ def largest_blob(mask, min_area_px, max_aspect, min_fill):
 
 # ─────────────────────────────────────────────────────────────────────────────
 # bearing: 픽셀 (u, v) → 카메라에서 그 픽셀 쪽을 가리키는 길이 1 방향 벡터
-#   필요한 입력 (카메라 내부 파라미터 — /camera/color/camera_info 가 알려줌)
+#   필요한 입력 (카메라 내부 파라미터 — /camera/camera/color/camera_info 가 알려줌)
 #     fx, fy : 초점거리(픽셀 단위)   cx, cy : 사진 중심 픽셀
 #   핀홀 카메라 모델: 픽셀 (u, v) 는 방향 ((u-cx)/fx, (v-cy)/fy, 1) 에서 온 빛
 #   광학 프레임 규칙: z 앞, x 오른쪽, y 아래  → x > 0 이면 목표가 화면 오른쪽

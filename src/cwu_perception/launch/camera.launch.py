@@ -4,7 +4,7 @@
 #
 # [공부 노트] 이 파일이 띄우는 것
 #   ① static TF base_link → camera_link   (mount.yaml 의 camera_mount)
-#   ② realsense2_camera_node              → /camera/color/image_raw, camera_info (realsense.yaml)
+#   ② realsense2_camera_node              → /camera/camera/color/image_raw, camera_info (realsense.yaml)
 #   ③ target_detector                     → /target/bearing (target.yaml)
 #   실행 예: ros2 launch cwu_perception camera.launch.py
 #           ros2 launch cwu_perception camera.launch.py start_camera:=false   # 녹화 재생 시험
@@ -48,7 +48,9 @@ def generate_launch_description():
             get_package_share_directory('realsense2_camera')
             result.append(Node(
                 package='realsense2_camera', executable='realsense2_camera_node',
-                # namespace + name → 토픽이 /camera/color/... 로 시작하게 됨
+                # realsense-ros 4.x는 /<namespace>/<name>/color/... 로 내보내므로 토픽은
+                # /camera/camera/color/... 입니다. namespace를 빼면 Pi(RSUSB)에서 노드는 뜨지만
+                # 프레임이 한 장도 안 나옵니다(2026-10-08 실측, 4회 반복). 빼지 마십시오.
                 namespace='camera', name='camera',
                 parameters=[LaunchConfiguration('camera_params_file'),
                             {'use_sim_time': use_sim_time}], output='screen'))

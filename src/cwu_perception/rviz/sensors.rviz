@@ -1,0 +1,60 @@
+# 개발용 RViz 화면: base_link 기준 LiDAR(/scan), TF, 카메라 컬러 영상(/camera/camera/color/image_raw).
+
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Cell Size: 0.4
+      Plane Cell Count: 9
+      Reference Frame: base_link
+      Value: true
+    - Class: rviz_default_plugins/LaserScan
+      Name: Scan
+      Color Transformer: FlatColor
+      Color: 0; 255; 0
+      Style: Points
+      Size (Pixels): 3
+      Topic:
+        Value: /scan
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 5
+      Value: true
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Show Names: true
+      Marker Scale: 0.3
+      Value: true
+    - Class: rviz_default_plugins/Image
+      Name: Camera
+      Topic:
+        Value: /camera/camera/color/image_raw
+        Reliability Policy: Best Effort
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Depth: 1
+      Value: true
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: base_link
+    Frame Rate: 15
+  Name: root
+  Tools: ~
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: Current View
+      Scale: 120
+      Target Frame: base_link
+      Value: TopDownOrtho (rviz_default_plugins)
+    Saved: ~
+Window Geometry:
+  Height: 800
+  Width: 1200

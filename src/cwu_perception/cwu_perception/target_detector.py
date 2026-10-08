@@ -4,8 +4,8 @@
 # 방향은 카메라 광학 프레임의 단위 벡터로 그대로 내보냅니다.
 #
 # [공부 노트] 입력·출력
-#   입력  : /camera/color/image_raw   (sensor_msgs/Image)      — 컬러 사진
-#           /camera/color/camera_info (sensor_msgs/CameraInfo) — 초점거리·중심 (bearing 계산에 필요)
+#   입력  : /camera/camera/color/image_raw   (sensor_msgs/Image)      — 컬러 사진
+#           /camera/camera/color/camera_info (sensor_msgs/CameraInfo) — 초점거리·중심 (bearing 계산에 필요)
 #   설정  : config/target.yaml (HSV 범위, 덩어리 크기 조건)
 #   출력  : /target/bearing (geometry_msgs/PointStamped) — point 에 길이 1 방향 (x, y, z)
 #           ※ Point 이지만 "위치"가 아니라 "방향"입니다. 안 보이면 아예 발행하지 않습니다.
@@ -28,8 +28,8 @@ class TargetDetector(Node):
         super().__init__('target_detector')
         # 파라미터 이름: 기본값. target.yaml 로 덮어씀
         defaults = {
-            'color_topic': '/camera/color/image_raw',
-            'camera_info_topic': '/camera/color/camera_info',
+            'color_topic': '/camera/camera/color/image_raw',
+            'camera_info_topic': '/camera/camera/color/camera_info',
             'bearing_topic': '/target/bearing',
             'hue_low_1': [0, 120, 60], 'hue_high_1': [10, 255, 255],     # 빨강 범위 1 (H 0~10)
             'hue_low_2': [170, 120, 60], 'hue_high_2': [179, 255, 255],  # 빨강 범위 2 (H 170~179)

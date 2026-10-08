@@ -29,9 +29,9 @@ class Feeder(Node):
         self.bridge = CvBridge()
         self.got = None
         self.info = self.create_publisher(
-            CameraInfo, '/camera/color/camera_info', qos_profile_sensor_data)
+            CameraInfo, '/camera/camera/color/camera_info', qos_profile_sensor_data)
         self.color = self.create_publisher(
-            Image, '/camera/color/image_raw', qos_profile_sensor_data)
+            Image, '/camera/camera/color/image_raw', qos_profile_sensor_data)
         self.create_subscription(PointStamped, '/target/bearing', self.on_bearing, 10)
 
     def on_bearing(self, msg):

@@ -26,7 +26,7 @@ The competition rules in `docs/competition_rules.md` are the source of truth for
 * Intel RealSense depth camera — used for colour only (see Confirmed Camera Role)
 * Four PSD distance sensors (model and interface not yet confirmed): one on the front-mounted gripper,
   plus one each on the left, right, and rear of the body
-* Nucleo ↔ Pi link is moving from ST-Link USB to a direct UART (Nucleo A0/A1 = UART4 ↔ Pi GPIO14/15),
+* Nucleo ↔ Pi link is moving from ST-Link USB to a direct UART (Nucleo PC10/PC11 = UART4 ↔ Pi GPIO15/14),
   because the USB link repeatedly froze under motor noise. Firmware and port change not done yet
 
 ## Confirmed Camera Role

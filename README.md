@@ -63,13 +63,13 @@ Nucleo 하드웨어 UART를 Pi GPIO UART에 직결합니다. 펌웨어(`platform
 
 | Nucleo-F446RE | | Raspberry Pi 4 |
 |---|---|---|
-| A0 (PA0, UART4 TX) | → | GPIO15 / RXD (10번 핀) |
-| A1 (PA1, UART4 RX) | ← | GPIO14 / TXD (8번 핀) |
+| PC10 (CN7 1번, UART4 TX) | → | GPIO15 / RXD (10번 핀) |
+| PC11 (CN7 2번, UART4 RX) | ← | GPIO14 / TXD (8번 핀) |
 | GND | — | GND (6번 핀) |
 
 - 둘 다 3.3 V 로직이라 레벨 변환기가 필요 없습니다. 전원선(3.3 V/5 V)은 연결하지 않습니다.
 - D3~D10은 모터·엔코더가 쓰므로 USART1(D8/D2)·USART6(PC7=D9)은 쓸 수 없습니다.
-- 펌웨어: 빌드 플래그로 `Serial`을 UART4(RX=PA1, TX=PA0)에 연결하므로 코드는 그대로입니다. 업로드는 계속 USB로 합니다.
+- 펌웨어: 빌드 플래그로 `Serial`을 UART4(RX=PC11, TX=PC10)에 연결하므로 코드는 그대로입니다. 업로드는 계속 USB로 합니다.
 - Pi: `/boot/firmware/config.txt`에 `enable_uart=1`, `dtoverlay=disable-bt` 추가, `cmdline.txt`에서 `console=serial0,115200` 삭제,
   `sudo systemctl disable hciuart`(있을 때) 후 재부팅 → `/dev/ttyAMA0`. 사용자가 `dialout` 그룹이어야 합니다.
 

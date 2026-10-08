@@ -54,6 +54,11 @@
     temporal_filter:
       enable: false
 
+    # 기본값 SYSTEM_DEFAULT는 RELIABLE이라, Wi-Fi 너머 느린 구독자(개발 PC RViz)가 있으면
+    # 발행이 막혀 RSUSB uvc streamer watchdog이 걸리고 영상이 멈춥니다(2026-10-08 Pi 실측).
+    # 검출기는 이미 qos_profile_sensor_data로 구독하므로 best effort로 맞춥니다.
+    color_qos: SENSOR_DATA
+
     # 스트림이 컬러 하나뿐이라 맞출 짝이 없습니다.
     enable_sync: false
     # D415를 Pi USB에 물리면 재부팅 후 첫 열기가 실패하는 일이 잦습니다.

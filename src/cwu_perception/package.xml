@@ -20,6 +20,8 @@
   <exec_depend>ament_index_python</exec_depend>
   <!-- 장착 TF 정의(mount.yaml)와 로더를 cwu_slam과 공유합니다. -->
   <exec_depend>cwu_slam</exec_depend>
+  <exec_depend>ydlidar_ros2_driver</exec_depend>
+  <exec_depend>rviz2</exec_depend>
   <!-- D415 드라이버는 선택 설치입니다: sudo apt install ros-humble-realsense2-camera -->
   <test_depend>python3-pytest</test_depend>
   <export><build_type>ament_python</build_type></export>

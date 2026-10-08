@@ -11,6 +11,7 @@ setup(
         ('share/cwu_perception', ['package.xml']),
         ('share/cwu_perception/launch', glob('launch/*.launch.py')),
         ('share/cwu_perception/config', glob('config/*.yaml')),
+        ('share/cwu_perception/rviz', glob('rviz/*.rviz')),
     ],
     install_requires=['setuptools'], zip_safe=True,
     maintainer='CWU Robot Team', maintainer_email='maintainer@example.com',
