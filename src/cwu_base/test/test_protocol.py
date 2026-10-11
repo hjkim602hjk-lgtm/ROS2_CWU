@@ -2,7 +2,7 @@
 # 밀려 들어온 옛 줄을 버리고 최신 줄만 쓰는지, 깨진 줄을 건너뛰는지 확인합니다.
 
 """Guard the line parser: newest sample only, malformed lines skipped."""
-from cwu_base.encoder_odom import drive_frame, latest_sample
+from cwu_base.encoder_odom import drive_frame, latest_sample, separation
 
 
 def test_takes_the_newest_line_not_the_backlog():
@@ -73,3 +73,9 @@ def test_drive_frame():
     assert drive_frame(0.2, 2.0, 0.2, tpm, tpm, 900) == b'[V0,900]'      # curvature kept
     # A larger right wheel needs fewer ticks for the same straight line.
     assert drive_frame(0.1, 0.0, 0.2, tpm, tpm / 1.01, 900) == b'[V500,495]'
+
+
+def test_separation_by_turn_direction():
+    assert separation(-0.01, 0.01, 0.1975, 0.2040) == 0.1975  # CCW (left turn)
+    assert separation(0.01, -0.01, 0.1975, 0.2040) == 0.2040  # CW (right turn)
+    assert separation(0.01, -0.01, 0.1975, -1.0) == 0.1975    # unset: symmetric

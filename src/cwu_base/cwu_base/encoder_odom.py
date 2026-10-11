@@ -77,6 +77,15 @@ def drive_frame(linear, angular, separation, tpm_left, tpm_right, max_tps):
     return f'[V{round(left / scale)},{round(right / scale)}]'.encode()
 
 
+def separation(left, right, ccw, cw):
+    """Effective track width for this step: rotation scale differs by turn direction.
+
+    Measured 2026-10-12 (4 bags, 129 in-place turn pairs vs scan matching): CCW 0.1975 m,
+    CW 0.2040 m. cw <= 0 means one symmetric width.
+    """
+    return cw if cw > 0 and right < left else ccw
+
+
 def latest_sample(lines, left_field, right_field):
     """완성된 줄들 중 가장 최신의 유효한 (왼쪽, 오른쪽) 틱을 돌려줍니다.
 
@@ -130,6 +139,8 @@ class EncoderOdometry(Node):
             ('cmd_timeout', 0.5),
             # 바퀴별 유효 반지름 배율 (wheel_radius 기준). 스캔 정합으로 실측.
             ('left_scale', 1.0), ('right_scale', 1.0),
+            # 시계방향(오른쪽) 회전에 쓸 유효 바퀴 간격. 0 이하면 wheel_separation 그대로.
+            ('wheel_separation_cw', UNSET),
         ])
         # 파라미터 객체 목록 → {이름: 값} 사전으로 정리. 이후 self.cfg['port'] 처럼 꺼내 씁니다.
         self.cfg = {d.name: d.value for d in p}
@@ -253,14 +264,14 @@ class EncoderOdometry(Node):
         # 정상 → 기준점 갱신
         self.ticks, self.stamp = (left_ticks, right_ticks), now
         # kinematics.integrate 로 새 위치 계산
-        self.pose = integrate(self.pose, left, right,
-                              self.cfg['wheel_separation'])
+        sep = separation(left, right, self.cfg['wheel_separation'], self.cfg['wheel_separation_cw'])
+        self.pose = integrate(self.pose, left, right, sep)
         # 발행. 속도 = 거리 ÷ 시간
         #   선속도(m/s)  = 두 바퀴 평균 거리 / dt
         #   각속도(rad/s) = (오른쪽-왼쪽)/트레드 / dt
         #   A if 조건 else B : 조건이 참이면 A. dt 가 0 이면 0으로 나누기를 피합니다.
         self.publish(now, (left + right) / 2 / dt if dt > 0 else 0.0,
-                     (right - left) / self.cfg['wheel_separation'] / dt if dt > 0 else 0.0)
+                     (right - left) / sep / dt if dt > 0 else 0.0)
 
     # publish: 현재 위치/속도를 /odom 메시지와 TF 로 만들어 내보냅니다.
     def publish(self, stamp, linear, angular):

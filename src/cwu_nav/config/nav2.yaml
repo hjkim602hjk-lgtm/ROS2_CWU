@@ -131,17 +131,20 @@ global_costmap:
       publish_frequency: 1.0
       global_frame: map
       robot_base_frame: base_link
-      # 사전 지도 없음. 크기·원점은 SLAM Toolbox의 /map을 따라갑니다(규정 2.3).
+      # 사전 지도 없음(규정 2.3). SLAM /map(정적 레이어)은 쓰지 않습니다: SLAM이 잠시 위치를
+      # 잘못 잡았을 때 그린 벽 흔적이 로봇 위에 남아 출발 칸이 lethal이 되고 경로 계획이
+      # 실패했음(2026-10-12 복귀 시험, 로봇 0.14 m 안 막힌 칸, 현재 스캔엔 없음).
+      # 실시간 스캔 장애물 레이어는 레이저가 지나간 칸을 지워 유령이 남지 않습니다.
+      # 출발점(map 원점) 중심 8 m 정사각: 3.6 m 경기장을 어느 모서리에서 출발해도 덮음.
       rolling_window: false
+      width: 8
+      height: 8
+      origin_x: -4.0
+      origin_y: -4.0
       resolution: 0.05
       track_unknown_space: true
       robot_radius: 0.165
-      plugins: [static_layer, obstacle_layer, inflation_layer]
-      static_layer:
-        plugin: nav2_costmap_2d::StaticLayer
-        map_subscribe_transient_local: true
-        # SLAM이 지도를 계속 다시 그리므로 매번 받아 덮어씁니다.
-        subscribe_to_updates: true
+      plugins: [obstacle_layer, inflation_layer]
       obstacle_layer:
         plugin: nav2_costmap_2d::ObstacleLayer
         enabled: true
@@ -232,7 +235,6 @@ velocity_smoother:
     deadband_velocity: [0.0, 0.0, 0.0]
     velocity_timeout: 0.2
 
-# Synthetic fixture only. Real drive replaces points from measured motor.yaml.
 collision_monitor:
   ros__parameters:
     base_frame_id: base_link
@@ -243,12 +245,15 @@ collision_monitor:
     source_timeout: 0.3
     base_shift_correction: false
     stop_pub_timeout: 0.2
-    polygons: [Stop]
-    Stop:
-      type: polygon
-      points: [0.32, 0.32, 0.32, -0.32, -0.32, -0.32, -0.32, 0.32]
-      action_type: stop
-      max_points: 0
+    polygons: [Approach]
+    # Synthetic fixture only. Real drive sets radius / time from measured motor.yaml.
+    Approach:
+      type: circle
+      radius: 0.25
+      action_type: approach
+      time_before_collision: 1.0
+      simulation_time_step: 0.05
+      max_points: 2 # 3번째 점부터 반응 (단일 잡음점 무시)
       visualize: false
     observation_sources: [scan]
     scan:

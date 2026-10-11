@@ -42,14 +42,14 @@ def configure_navigation(config, directory, measured=None):
             min_velocity=[0., 0., -m['max_angular_speed']],
             max_accel=[m['max_linear_accel'], 0., m['max_angular_accel']],
             max_decel=[-m['max_linear_accel'], 0., -m['max_angular_accel']])
-        # The square contains the entire turning envelope in every orientation.
-        # ④ Collision Monitor 정지 영역: 이 사각형 안에 스캔 점이 들어오면 즉시 속도 0
-        #    반폭 = 로봇 반경 + 제동거리 + 여유 + (반응 지연 동안 최고 속도로 가는 거리)
-        stop = (m['robot_radius'] + m['braking_distance'] + m['safety_margin']
-                + m['safety_latency'] * m['max_wheel_speed'])
-        # 꼭짓점 4개를 [x1,y1, x2,y2, ...] 한 줄로: (+,+) (+,-) (-,-) (-,+)
-        config['collision_monitor']['ros__parameters']['Stop']['points'] = [
-            stop, stop, stop, -stop, -stop, -stop, -stop, stop]
+        # ④ Collision Monitor "approach": 원형 몸체(반경 + 여유)를 현재 명령으로 앞당겨
+        #    움직여 보고, time_before_collision 안에 스캔 점과 닿으면 그 명령만 줄입니다.
+        #    예전 사각 "stop" 영역은 옆·뒤 물체에도 회전·후진까지 막아 로봇이 갇혔음
+        #    (2026-10-12 복귀 시험). 원형이라 제자리 회전은 새로 닿는 점이 없습니다.
+        approach = config['collision_monitor']['ros__parameters']['Approach']
+        approach['radius'] = m['robot_radius'] + m['safety_margin']
+        approach['time_before_collision'] = (m['safety_latency']
+                                             + m['braking_distance'] / m['max_linear_speed'])
     # ⑤ 복구 동작은 "기다리기"만 — 후진·제자리 회전 복구는 장애물에 부딪힐 수 있어 뺌
     config['behavior_server']['ros__parameters']['behavior_plugins'] = ['wait']
     # ⑥ 행동 트리(BT): Nav2 가 "경로 계획 → 따라가기 → 실패 시 복구"를 어떤 순서로 할지 적은 XML.

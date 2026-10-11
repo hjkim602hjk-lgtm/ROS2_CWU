@@ -65,14 +65,18 @@ def odom_at(odom, t):
     return tuple(np.interp(t, odom[:, 0], odom[:, c]) for c in (1, 2, 3))
 
 
-def wheel_travel(odom, t0, t1, sep):
-    """Signed path length and heading change along odometry, split into wheel travel."""
+def wheel_travel(odom, t0, t1, sep, sep_cw=None):
+    """Signed path length and heading change along odometry, split into wheel travel.
+
+    sep_cw: track width the recording used for clockwise steps (encoder_odom wheel_separation_cw).
+    """
     k = (odom[:, 0] > t0) & (odom[:, 0] < t1)
     a, b = odom_at(odom, t0), odom_at(odom, t1)
     xs, ys, th = (np.r_[a[c], odom[k, c + 1], b[c]] for c in (0, 1, 2))
     ds = np.diff(xs) * np.cos(th[:-1]) + np.diff(ys) * np.sin(th[:-1])
-    dist, dth = ds.sum(), b[2] - a[2]
-    return dist - dth * sep / 2, dist + dth * sep / 2
+    dth = np.diff(th)
+    w = np.where(dth < 0, sep_cw or sep, sep)
+    return float((ds - dth * w / 2).sum()), float((ds + dth * w / 2).sum())
 
 
 def points(scan, yaw):
@@ -131,7 +135,7 @@ def icp(A, B, guess, iters=40):
     return (x, y, th), float(inlier.mean()), rms, eig
 
 
-def collect(odom, scans, yaw, sep, dt):
+def collect(odom, scans, yaw, sep, dt, sep_cw=None):
     pairs, i = [], 0
     while i < len(scans) - 1:
         ti = scans[i][0] + dt
@@ -158,7 +162,7 @@ def collect(odom, scans, yaw, sep, dt):
         res = icp(points(scans[i], yaw), points(scans[j], yaw), guess)
         if res is not None:
             pose, inl, rms, eig = res
-            sl, sr = wheel_travel(odom, ti, scans[j][0] + dt, sep)
+            sl, sr = wheel_travel(odom, ti, scans[j][0] + dt, sep, sep_cw)
             pairs.append(dict(t0=ti, t1=scans[j][0] + dt, odom=guess, icp=pose,
                               s_l=sl, s_r=sr, inlier=inl, rms=rms, eig=eig))
         i = j  # non-overlapping pairs: independent samples
@@ -214,6 +218,7 @@ def main():
     ap.add_argument('bag')
     ap.add_argument('--sep', type=float, default=0.20686)
     ap.add_argument('--radius', type=float, default=0.04151)
+    ap.add_argument('--sep-cw', type=float, default=None, help='recorded clockwise track width')
     ap.add_argument('--dt', type=float, default=None, help='scan stamp offset; default: search')
     ap.add_argument('--yaw', type=float, default=None, help='laser mount yaw; default: from bag')
     ap.add_argument('--pairs', default=None)
@@ -224,7 +229,7 @@ def main():
           f'mount yaw {math.degrees(yaw):.1f}°')
     best = None
     for dt in ([a.dt] if a.dt is not None else [-0.05, 0.0, 0.05, 0.10, 0.15]):
-        allp = collect(odom, scans, yaw, a.sep, dt)
+        allp = collect(odom, scans, yaw, a.sep, dt, a.sep_cw)
         pairs = [p for p in allp if good(p)]
         (a_l, a_r, b), pairs = fit(pairs)
         # Residual after calibration: how well one (a_l, a_r, b) explains every pair.
@@ -249,9 +254,10 @@ def main():
         d = np.array([math.hypot(*p['icp'][:2]) / max(math.hypot(*p['odom'][:2]), 1e-6) for p in straight])
         print(f'직진형: ICP/odom 거리비 중앙값 {np.median(d):.4f}, 이동방향 차 중앙값 {math.degrees(np.median(off)):+.2f}°'
               f' (라이다 yaw 보정 후보)')
-    if spins:
-        r = np.array([p['icp'][2] / p['odom'][2] for p in spins if abs(p['odom'][2]) > 0.2])
-        print(f'제자리회전: ICP/odom 회전비 중앙값 {np.median(r):.4f} (n={len(r)})')
+    for name, sign in (('반시계', 1), ('시계', -1)):
+        r = [p['icp'][2] / p['odom'][2] for p in spins if sign * p['odom'][2] > 0.2]
+        if r:
+            print(f'제자리회전 {name}: ICP/odom 회전비 중앙값 {np.median(r):.4f} (n={len(r)})')
     if a.pairs:
         with open(a.pairs, 'w') as f:
             json.dump(dict(dt=dt, yaw=yaw, a_l=a_l, a_r=a_r, sep=b, radius=a.radius, sep0=a.sep,

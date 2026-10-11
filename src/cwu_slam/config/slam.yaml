@@ -39,9 +39,10 @@ slam_toolbox:
     # 0.25 m 간격 조합이 국소 오차(1.5 cm/1.12°)와 지도 벽 두께(막힌 칸 최소) 모두 최선.
     # 0.05 m 간격과 함께 쓰면 오히려 나빠짐(3.6 cm/4.1°). 기본값 0.5/1.0은 6.0 cm.
     distance_variance_penalty: 0.03
-    angle_variance_penalty: 0.1
     minimum_distance_penalty: 0.05
-    minimum_angle_penalty: 0.3
+    # 각도는 기본값(angle_variance_penalty 1.0, minimum_angle_penalty 0.9): 스캔이 방향을 바로잡게 둠.
+    # odom 회전 배율이 회전 방향마다 ~3% 달라(반시계 0.995, 시계 0.967) 각도까지 odom을 강하게
+    # 믿으면(0.1/0.3) 복귀 중 방향 오차가 쌓임. 3회차 녹화 재생: 최종 오차 14.4 cm/-9.7° -> 6.2 cm/-1.5°.
     use_scan_barycenter: true
     scan_buffer_size: 10
     scan_buffer_maximum_scan_distance: 10.0

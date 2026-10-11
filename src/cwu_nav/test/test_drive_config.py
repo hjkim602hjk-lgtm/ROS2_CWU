@@ -19,7 +19,10 @@ def test_measured_limits_cover_rotation_and_stopping():
     p = config['collision_monitor']['ros__parameters']
     assert p['cmd_vel_in_topic'] == '/cmd_vel'
     assert p['cmd_vel_out_topic'] == '/cmd_vel_safe'
-    assert min(abs(v) for v in p['Stop']['points']) >= .375 - 1e-9
+    assert p['Approach']['action_type'] == 'approach'
+    assert p['Approach']['radius'] == pytest.approx(.18 + .02)
+    # Must cover the reaction delay plus the braking distance at full speed.
+    assert p['Approach']['time_before_collision'] == pytest.approx(.9 + .04 / .1)
     assert config['local_costmap']['local_costmap']['ros__parameters']['robot_radius'] == .18
     assert config['velocity_smoother']['ros__parameters']['max_velocity'] == [.1, 0., .5]
     assert config['velocity_smoother']['ros__parameters']['min_velocity'][0] == 0.

@@ -93,6 +93,8 @@ def generate_bringup(demo=False, backend=None):
             DeclareLaunchArgument('encoder_port', default_value='/dev/ttyAMA0'),
             # true면 encoder_odom이 /cmd_vel로 모터를 움직입니다 (ROBOT40_V3)
             DeclareLaunchArgument('drive', default_value='false'),
+            # Nav2와 함께면 cmd_vel_safe: 모든 주행 명령이 collision monitor를 거칩니다
+            DeclareLaunchArgument('cmd_vel_topic', default_value='cmd_vel'),
         ])
 
     # ── nodes: 인자 값이 정해진 뒤 실행되어 "실제로 띄울 것" 목록을 돌려줌 ──
@@ -162,6 +164,7 @@ def generate_bringup(demo=False, backend=None):
                     'encoder_port': LaunchConfiguration('encoder_port'),
                     'use_sim_time': LaunchConfiguration('use_sim_time'),
                     'drive': LaunchConfiguration('drive'),
+                    'cmd_vel_topic': LaunchConfiguration('cmd_vel_topic'),
                 }.items()))
 
         # ④ SLAM 백엔드 선택 (호출자가 정했으면 그것, 아니면 backend:= 인자)

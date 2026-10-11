@@ -2,8 +2,10 @@
 # CFG/ACK uses a fresh session on every connection; all units SI except ticks/s.
 motor_bridge:
   ros__parameters:
-    calibration_confirmed: false
-    mount_calibration_confirmed: false
+    # 2026-10-12: Nav2(cwu_nav nav2.launch drive:=true)가 아래 한계를 읽습니다. 구동은
+    # ROBOT40_V3 + encoder_odom([V] 바퀴 PI)이 맡고 motor_bridge는 쓰지 않습니다.
+    calibration_confirmed: true
+    mount_calibration_confirmed: true # mount.yaml yaw 176.4° 스캔 정합 실측
     port: /dev/ttyAMA0
     baud: 115200
     wheel_radius: 0.04151 # effective, floor 1 m test 2026-09-30 (see encoder.yaml)
@@ -11,7 +13,7 @@ motor_bridge:
     ticks_per_rev: 3009.5 # provisional mean; repeat 10-turn measurement
     left_sign: 1.0
     right_sign: 1.0
-    max_wheel_speed: -1.0
+    max_wheel_speed: 0.156 # encoder.yaml max_wheel_tps 900 x 0.1733 mm/틱
     kp_left: -1.0
     ki_left: -1.0
     kp_right: -1.0
@@ -19,13 +21,13 @@ motor_bridge:
     pwm_limit: -1
     max_accel_ticks: -1.0
     robot_radius: 0.165 # 원형 지름 330 mm (2026-10-11 사용자)
-    braking_distance: -1.0
-    safety_margin: -1.0
-    safety_latency: -1.0 # >= command_timeout + .05 + MCU timeout + max(scan,encoder,TF timeout) + .2
-    max_linear_speed: -1.0
-    max_angular_speed: -1.0
-    max_linear_accel: -1.0
-    max_angular_accel: -1.0
+    braking_distance: 0.04 # 0.1 m/s에서 정지 명령 후 2.0/1.8 cm (전진/후진), 0.22 s. 최대속도 여유
+    safety_margin: 0.05
+    safety_latency: 0.3 # 스캔 주기 0.1 + 스캔 도착 지연 0.12 + 명령 경로 ~0.05 (collision monitor는 스캔으로 정지)
+    max_linear_speed: 0.10
+    max_angular_speed: 0.5 # 바퀴 ±0.05 m/s (≈290 틱/s): 바닥에서 멈추지 않는 하한 위
+    max_linear_accel: 0.3
+    max_angular_accel: 1.5
     mcu_timeout_ms: 300
     command_timeout: 0.2
     scan_timeout: 0.3
