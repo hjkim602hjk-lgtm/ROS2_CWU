@@ -64,20 +64,17 @@ SAMPLE_PERIOD = 0.1
 #   돌려주는 값: (왼쪽, 오른쪽) 정수 튜플, 쓸 만한 줄이 없으면 None
 #   ROS 를 안 쓰는 함수라 테스트에서 따로 불러 시험할 수 있습니다.
 # ─────────────────────────────────────────────────────────────────────────────
-def drive_frame(linear, angular, separation, pwm_per_mps, pwm_min, pwm_max):
-    """cmd_vel -> ROBOT40_V3 "[Dleft,right]" open-loop signed PWM frame.
+def drive_frame(linear, angular, separation, tpm_left, tpm_right, max_tps):
+    """cmd_vel -> ROBOT40_V3 "[Vleft,right]" wheel speeds in ticks/s (forward = +).
 
-    ponytail: open-loop PWM proportional to wheel speed; replace with a firmware
-    wheel-speed PI loop when Nav2 needs accurate velocity tracking.
+    tpm_* are ticks per metre per wheel (differ when the wheels' effective radii do).
+    The firmware closes the loop per wheel with the [G] gains. Both wheels are scaled
+    down together past max_tps so the commanded curvature is kept.
     """
-    def pwm(speed):
-        value = speed * pwm_per_mps
-        if abs(value) < 0.5:
-            return 0
-        value = math.copysign(max(abs(value), pwm_min), value)
-        return int(round(max(-pwm_max, min(pwm_max, value))))
     half = angular * separation / 2
-    return f'[D{pwm(linear - half)},{pwm(linear + half)}]'.encode()
+    left, right = (linear - half) * tpm_left, (linear + half) * tpm_right
+    scale = max(1.0, abs(left) / max_tps, abs(right) / max_tps)
+    return f'[V{round(left / scale)},{round(right / scale)}]'.encode()
 
 
 def latest_sample(lines, left_field, right_field):
@@ -128,8 +125,11 @@ class EncoderOdometry(Node):
             ('pose_covariance', [0.01, 0.01, 0.05]),            # 위치 불확실성 (x, y, yaw)
             ('twist_covariance', [0.01, 0.01, 0.05]),           # 속도 불확실성
             # ROBOT40_V3 주행: /cmd_vel -> [Dl,r] PWM + '!' 하트비트 (drive: true 일 때만)
-            ('drive', False), ('pwm_per_mps', UNSET), ('pwm_min', 0), ('pwm_max', 130),
+            ('drive', False), ('cmd_vel_topic', 'cmd_vel'), ('max_wheel_tps', UNSET),
+            ('feed_forward', UNSET), ('static_pwm', 0.0), ('kp', UNSET), ('ki', 0.0),
             ('cmd_timeout', 0.5),
+            # 바퀴별 유효 반지름 배율 (wheel_radius 기준). 스캔 정합으로 실측.
+            ('left_scale', 1.0), ('right_scale', 1.0),
         ])
         # 파라미터 객체 목록 → {이름: 값} 사전으로 정리. 이후 self.cfg['port'] 처럼 꺼내 씁니다.
         self.cfg = {d.name: d.value for d in p}
@@ -162,13 +162,18 @@ class EncoderOdometry(Node):
         # 시리얼을 블로킹으로 읽지 않고 짧은 주기로 비웁니다. 스레드가 없어야
         # 종료와 파라미터 처리가 단순하고, MCU 전송 주기에 맞춰 발행됩니다.
         # create_timer(주기초, 함수): 그 주기마다 함수를 자동 호출. rclpy.spin() 이 돌려줍니다.
-        self.create_timer(0.005, self.poll)                      # 5 ms 마다 시리얼 확인
+        # 20 ms: 텔레메트리가 50 ms마다 오므로 충분. 5 ms 타이머는 Pi 4 코어 하나의 43%를 썼음.
+        self.create_timer(0.02, self.poll)                       # 20 ms 마다 시리얼 확인
         self.create_timer(self.cfg['timeout'], self.check_link)  # 0.5 s 마다 끊김 확인
         if self.cfg['drive']:
-            if self.cfg['pwm_per_mps'] <= 0:
-                raise ValueError('drive: true 에는 실측 pwm_per_mps 가 필요합니다.')
+            if min(self.cfg[k] for k in ('max_wheel_tps', 'feed_forward', 'kp')) <= 0:
+                raise ValueError('drive: true 에는 max_wheel_tps·feed_forward·kp 실측값이 필요합니다.')
+            tpm = self.cfg['ticks_per_rev'] / (2 * math.pi * self.cfg['wheel_radius'])
+            self.tpm = (tpm / self.cfg['left_scale'], tpm / self.cfg['right_scale'])
+            self.gains = ('[G{feed_forward},{static_pwm},{kp},{ki}]'.format(**self.cfg)).encode()
+            self.gain_sent = None
             self.cmd, self.cmd_stamp = (0.0, 0.0), None
-            self.create_subscription(Twist, 'cmd_vel', self.on_cmd_vel, 10)
+            self.create_subscription(Twist, self.cfg['cmd_vel_topic'], self.on_cmd_vel, 10)
             # 20 Hz: 펌웨어 하트비트 제한 0.7 s 안에 여러 번 보내고, 정지 상태에서도
             # MODE_DRIVE를 유지해 텔레메트리(엔코더)가 계속 나오게 합니다.
             self.create_timer(0.05, self.send_drive)
@@ -232,8 +237,8 @@ class EncoderOdometry(Node):
                                    self.cfg['ticks_per_rev'],
                                    self.cfg['wheel_radius'])
             for was, is_now, sign in (
-                (previous[0], left_ticks, self.cfg['left_sign']),
-                (previous[1], right_ticks, self.cfg['right_sign'])))
+                (previous[0], left_ticks, self.cfg['left_sign'] * self.cfg['left_scale']),
+                (previous[1], right_ticks, self.cfg['right_sign'] * self.cfg['right_scale'])))
         # 지난 표본 이후 흐른 시간(초). nanoseconds 는 정수 나노초라 1e9 로 나눔
         dt = (now - previous_stamp).nanoseconds / 1e9
         # 말도 안 되게 빨리 움직였으면 = 잡음으로 숫자가 깨진 줄 → 버림
@@ -309,7 +314,12 @@ class EncoderOdometry(Node):
                 self.get_clock().now() - self.cmd_stamp).nanoseconds / 1e9 > self.cfg['cmd_timeout']:
             linear = angular = 0.0
         frame = drive_frame(linear, angular, self.cfg['wheel_separation'],
-                            self.cfg['pwm_per_mps'], self.cfg['pwm_min'], self.cfg['pwm_max'])
+                            *self.tpm, self.cfg['max_wheel_tps'])
+        now = self.get_clock().now()
+        # Gains live in MCU RAM only; resend every second so a board reset recovers.
+        if self.gain_sent is None or (now - self.gain_sent).nanoseconds > 1e9:
+            frame = self.gains + frame
+            self.gain_sent = now
         try:
             self.serial.write(b'!' + frame)
         except (serial.SerialException, OSError) as e:

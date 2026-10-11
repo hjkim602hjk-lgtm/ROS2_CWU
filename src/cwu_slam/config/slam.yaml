@@ -21,8 +21,10 @@ slam_toolbox:
     max_laser_range: 12.0
     throttle_scans: 1
     minimum_time_interval: 0.2
-    minimum_travel_distance: 0.05
-    minimum_travel_heading: 0.10
+    # 2026-10-11 녹화 재생 비교(tools/slam_replay.py + slam_eval.py, 109쌍): 0.05 m마다 정합하면
+    # 작은 편향이 쌓여 직진을 ~55%로 깎음(위치오차 5.8 cm/구간). 0.25 m + 아래 페널티 → 1.5 cm.
+    minimum_travel_distance: 0.25
+    minimum_travel_heading: 0.2
     transform_publish_period: 0.05
     transform_timeout: 0.2
     tf_buffer_duration: 30.0
@@ -32,6 +34,14 @@ slam_toolbox:
     enable_interactive_mode: false
     debug_logging: false
     use_scan_matching: true
+    # 정합이 odom에서 멀리 벗어나지 못하게 좁힙니다(작을수록 odom 신뢰). 보정된 바퀴 odom은
+    # 25 cm 구간마다 1.1 cm / 0.8° 오차라 스캔보다 국소적으로 정확합니다. 0.03/0.1과 위
+    # 0.25 m 간격 조합이 국소 오차(1.5 cm/1.12°)와 지도 벽 두께(막힌 칸 최소) 모두 최선.
+    # 0.05 m 간격과 함께 쓰면 오히려 나빠짐(3.6 cm/4.1°). 기본값 0.5/1.0은 6.0 cm.
+    distance_variance_penalty: 0.03
+    angle_variance_penalty: 0.1
+    minimum_distance_penalty: 0.05
+    minimum_angle_penalty: 0.3
     use_scan_barycenter: true
     scan_buffer_size: 10
     scan_buffer_maximum_scan_distance: 10.0

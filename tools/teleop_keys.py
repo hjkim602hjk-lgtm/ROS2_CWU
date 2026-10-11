@@ -15,8 +15,8 @@ import tty
 import rclpy
 from geometry_msgs.msg import Twist
 
-LINEAR = 0.10   # m/s
-ANGULAR = 0.60  # rad/s
+LINEAR = 0.08   # m/s
+ANGULAR = 0.40  # rad/s (slower stalls the wheels on the floor)
 KEYS = {'w': (LINEAR, 0.0), 's': (-LINEAR, 0.0), 'a': (0.0, ANGULAR),
         'd': (0.0, -ANGULAR), ' ': (0.0, 0.0)}
 

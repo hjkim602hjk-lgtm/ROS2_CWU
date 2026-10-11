@@ -61,6 +61,17 @@ int wrongCycles=0;
 bool wheelHold=false;
 // [Dl,r]: Pi-commanded signed PWM (ROS cmd_vel), heartbeat required, no time cap.
 int driveL=0, driveR=0;
+// [Vl,r]: wheel speed targets in ticks/s, forward = + ; per-wheel PI every CONTROL_MS.
+// Gains come from the Pi YAML via [Gff,static,kp,ki] (RAM only, resent by the Pi).
+// Raw V3 ticks fall when the robot drives forward (2026-10-11), hence the -1 signs.
+constexpr int FWD_SIGN_L=-1, FWD_SIGN_R=-1;
+constexpr float MAX_TPS=1000.0f;
+bool velMode=false, gainsSet=false;
+float gFF=0, gStatic=0, gKp=0, gKi=0;
+float velTarget[2]={0,0}, velInt[2]={0,0};
+int velPwm[2]={0,0};
+int32_t velPrevL=0, velPrevR=0;
+uint32_t velTime=0;
 bool telemetryStream=false, helpPending=false, statusPending=false;
 bool calibrating=false, settling=false;
 uint32_t calibrationTime=0, settleStart=0;
@@ -145,6 +156,8 @@ bool startMode(RunMode mode,uint8_t source) {
   reachedL=reachedR=false;
   modeStartTime=lastControlTime=lastPulseL=lastPulseR=millis();
   frontOverSince=pivotOverSince=0; driveL=driveR=0;
+  velTarget[0]=velTarget[1]=velInt[0]=velInt[1]=0; velPwm[0]=velPwm[1]=0;
+  snapshot(velPrevL,velPrevR); velTime=millis();
   currentMode=mode; say("# START"); return true;
 }
 void reportDistance(Stream &out) {
@@ -223,20 +236,57 @@ void reportCalibration(Stream &out) {
 bool validScale(float l,float r) {
   return isfinite(l) && isfinite(r) && l>=0.01f && r>=0.01f && l<=10000 && r<=10000 && l/r>=0.5f && l/r<=2.0f;
 }
+// [D] PWM or [V] ticks/s; false = malformed or out of range.
 bool driveFrame(char *s,uint8_t source) {
+  bool vel=s[0]=='V';
   char *end; long l=strtol(s+1,&end,10);
   if(end==s+1 || *end!=',') return false;
   char *next=end+1; long r=strtol(next,&end,10);
-  if(end==next || *end || labs(l)>MAX_PWM || labs(r)>MAX_PWM) return false;
+  long limit=vel?(long)MAX_TPS:MAX_PWM;
+  if(end==next || *end || labs(l)>limit || labs(r)>limit) return false;
+  if(vel && !gainsSet) { say("# REJECT GAINS_FIRST"); return true; }
   if(currentMode==MODE_STOP) {
     if(!startMode(MODE_DRIVE,source)) return true;
   } else if(currentMode!=MODE_DRIVE || source!=motionOwner) { say("# REJECT BUSY"); return true; }
-  driveL=l; driveR=r;
+  velMode=vel;
+  if(vel) { velTarget[0]=l; velTarget[1]=r; } else { driveL=l; driveR=r; }
   return true;
+}
+bool gainFrame(char *s) {
+  float v[4]; char *p=s+1, *end;
+  for(int i=0;i<4;++i) {
+    v[i]=strtof(p,&end);
+    if(end==p || !isfinite(v[i]) || v[i]<0 || v[i]>1000) return false;
+    if(i<3 && *end!=',') return false;
+    p=end+1;
+  }
+  if(*end) return false;
+  gFF=v[0]; gStatic=v[1]; gKp=v[2]; gKi=v[3]; gainsSet=true;
+  return true;
+}
+// One PI step per wheel; target 0 means output 0 and a cleared integrator.
+void velocityControl(uint32_t now) {
+  if(now-velTime<CONTROL_MS) return;
+  float dt=(now-velTime)*0.001f; velTime=now;
+  int32_t l,r; snapshot(l,r);
+  float speed[2]={(float)(l-velPrevL)*FWD_SIGN_L/dt,(float)(r-velPrevR)*FWD_SIGN_R/dt};
+  velPrevL=l; velPrevR=r;
+  for(int i=0;i<2;++i) {
+    float target=velTarget[i];
+    if(target==0) { velInt[i]=0; velPwm[i]=0; continue; }
+    float err=target-speed[i];
+    float base=gFF*target+(target>0?gStatic:-gStatic)+gKp*err;
+    float candidate=constrain(velInt[i]+gKi*err*dt,-(float)MAX_PWM,(float)MAX_PWM);
+    float out=base+candidate;
+    // Conditional integration: do not wind up further into saturation.
+    if(fabsf(out)<=MAX_PWM || (out>0)!=(err>0)) velInt[i]=candidate;
+    velPwm[i]=(int)lroundf(constrain(base+velInt[i],-(float)MAX_PWM,(float)MAX_PWM));
+  }
 }
 void frameCommand(char *s,uint8_t source) {
   // Drive frames stream at 20 Hz while moving, so they bypass the STOP-only check.
-  if(s[0]=='D') { if(!driveFrame(s,source)) say("# REJECT DRIVE_FORMAT"); return; }
+  if(s[0]=='D' || s[0]=='V') { if(!driveFrame(s,source)) say("# REJECT DRIVE_FORMAT"); return; }
+  if(s[0]=='G') { say(gainFrame(s)?"# GAINS_OK":"# REJECT GAIN_FORMAT"); return; }
   if(currentMode!=MODE_STOP || settling || servoBusy()) { say("# REJECT BUSY"); return; }
   if((s[0]=='L' || s[0]=='R') && strlen(s)==4) {
     for(int i=1;i<4;++i) if(s[i]<'0' || s[i]>'9') { say("# REJECT SERVO_FORMAT"); return; }
@@ -339,6 +389,7 @@ void help(Stream &out) {
   out.println("# l/r/b/p: left/right/both/PID 1 sec; l/r are NOT turns");
   out.println("# w/e: left/right wheel until q, heartbeat required, max 10 sec");
   out.println("# [D80,-80]: signed PWM drive (ROS), ! heartbeat, front PSD blocks forward");
+  out.println("# [V577,577]: wheel ticks/s (fwd +) PI drive; needs [Gff,static,kp,ki] first");
   out.println("# P/a: continuous PID/PSD, heartbeat required, max 10 sec");
   out.println("# q or space: STOP; z: STOP+zero counts; t: stream toggle; s: status");
   out.println("# 1/2/3: left30/60/90; 4/5/6: right30/60/90");
@@ -383,7 +434,11 @@ void loop() {
     case MODE_DRIVE: {
       // Front PSD blocks forward motion only, so the robot can still turn/back away.
       bool blocked=psdHeld(analogRead(PSD_FRONT)>=PSD_THRESHOLD,frontOverSince,now);
-      if(blocked && driveL+driveR>0) setMotors(0,0); else setMotors(driveL,driveR);
+      bool forward=velMode?velTarget[0]+velTarget[1]>0:driveL+driveR>0;
+      if(velMode) velocityControl(now);
+      if(blocked && forward) { setMotors(0,0); velInt[0]=velInt[1]=0; }
+      else if(velMode) setMotors(velPwm[0],velPwm[1]);
+      else setMotors(driveL,driveR);
       break;
     }
     default: break;

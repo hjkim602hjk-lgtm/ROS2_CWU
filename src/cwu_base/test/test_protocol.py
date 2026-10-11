@@ -65,8 +65,11 @@ def test_robot40_v3_telemetry_skips_status_lines():
 
 
 def test_drive_frame():
-    assert drive_frame(0.0, 0.0, 0.2, 700, 30, 130) == b'[D0,0]'
-    assert drive_frame(0.1, 0.0, 0.2, 700, 30, 130) == b'[D70,70]'
-    assert drive_frame(0.0, 1.0, 0.2, 700, 30, 130) == b'[D-70,70]'   # CCW: left back
-    assert drive_frame(0.01, 0.0, 0.2, 700, 30, 130) == b'[D30,30]'   # deadband floor
-    assert drive_frame(1.0, 0.0, 0.2, 700, 30, 130) == b'[D130,130]'  # clamp
+    tpm = 5000.0  # ticks per metre
+    assert drive_frame(0.0, 0.0, 0.2, tpm, tpm, 900) == b'[V0,0]'
+    assert drive_frame(0.1, 0.0, 0.2, tpm, tpm, 900) == b'[V500,500]'
+    assert drive_frame(0.0, 1.0, 0.2, tpm, tpm, 900) == b'[V-500,500]'   # CCW: left back
+    assert drive_frame(0.5, 0.0, 0.2, tpm, tpm, 900) == b'[V900,900]'    # clamp
+    assert drive_frame(0.2, 2.0, 0.2, tpm, tpm, 900) == b'[V0,900]'      # curvature kept
+    # A larger right wheel needs fewer ticks for the same straight line.
+    assert drive_frame(0.1, 0.0, 0.2, tpm, tpm / 1.01, 900) == b'[V500,495]'

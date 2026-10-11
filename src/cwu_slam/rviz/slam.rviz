@@ -98,6 +98,21 @@ Visualization Manager:
                 {}
       Update Interval: 0
       Value: true
+    # Robot webcam (Pi usb_cam JPEG -> tools/webcam_view.py on the PC -> /webcam/view)
+    - Class: rviz_default_plugins/Image
+      Enabled: true
+      Max Value: 1
+      Median window: 5
+      Min Value: 0
+      Name: Webcam
+      Normalize Range: true
+      Topic:
+        Depth: 1
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Best Effort
+        Value: /webcam/view
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
@@ -143,6 +158,8 @@ Visualization Manager:
       Y: 0
     Saved: ~
 Window Geometry:
+  Webcam:
+    collapsed: false
   Displays:
     collapsed: false
   Height: 1040
