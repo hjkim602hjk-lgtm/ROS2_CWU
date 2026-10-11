@@ -9,6 +9,11 @@ Panels:
       Expanded: ~
       Splitter Ratio: 0.5
     Tree Height: 579
+  - Class: rviz_common/Views
+    Expanded:
+      - /Current View1
+    Name: Views
+    Splitter Ratio: 0.5
 Visualization Manager:
   Class: ""
   Displays:
@@ -99,7 +104,22 @@ Visualization Manager:
     Fixed Frame: map
     Frame Rate: 15
   Name: root
-  Tools: ~
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Interact
+      Hide Inactive Objects: true
+    - Class: rviz_default_plugins/Measure
+      Line color: 128; 128; 0
+    - Class: rviz_default_plugins/SetInitialPose
+      Topic:
+        Value: /initialpose
+    - Class: rviz_default_plugins/SetGoal
+      Topic:
+        Value: /goal_pose
+    - Class: rviz_default_plugins/PublishPoint
+      Single click: true
+      Topic:
+        Value: /clicked_point
   Transformation:
     Current:
       Class: rviz_default_plugins/TF
@@ -116,7 +136,7 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Scale: 140
+      Scale: 220
       Target Frame: map
       Value: TopDownOrtho (rviz_default_plugins)
       X: 0
@@ -125,10 +145,9 @@ Visualization Manager:
 Window Geometry:
   Displays:
     collapsed: false
-  Height: 800
+  Height: 1040
   Hide Left Dock: false
   Hide Right Dock: false
-  QMainWindow State: 000000ff00000000fd000000010000000000000156000002c6fc0200000001fb000000100044006900730070006c006100790073010000003d000002c6000000c900ffffff0000028c000002c600000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
-  Width: 1000
-  X: 2027
-  Y: 64
+  Width: 1920
+  X: 1920
+  Y: 0

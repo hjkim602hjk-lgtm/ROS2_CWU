@@ -93,7 +93,7 @@ local_costmap:
       width: 3
       height: 3
       resolution: 0.05
-      robot_radius: 0.22
+      robot_radius: 0.165
       plugins: [obstacle_layer, inflation_layer]
       obstacle_layer:
         plugin: nav2_costmap_2d::ObstacleLayer
@@ -118,7 +118,7 @@ local_costmap:
       inflation_layer:
         plugin: nav2_costmap_2d::InflationLayer
         # 장애물은 400 mm 격자에 정렬되고 간격도 400 mm 배수입니다.
-        # robot_radius 0.22면 지름 0.44라 400 mm 통로는 애초에 못 지나갑니다.
+        # robot_radius 0.165(지름 330 mm)면 400 mm 통로에서 양옆 여유가 35 mm뿐입니다.
         # inflation_radius를 더 키우면 800 mm 통로까지 막히므로 0.35에서 멈춥니다.
         inflation_radius: 0.35
         cost_scaling_factor: 3.0
@@ -135,7 +135,7 @@ global_costmap:
       rolling_window: false
       resolution: 0.05
       track_unknown_space: true
-      robot_radius: 0.22
+      robot_radius: 0.165
       plugins: [static_layer, obstacle_layer, inflation_layer]
       static_layer:
         plugin: nav2_costmap_2d::StaticLayer

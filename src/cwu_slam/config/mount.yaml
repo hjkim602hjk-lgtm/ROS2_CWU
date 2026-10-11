@@ -12,13 +12,16 @@
 # 부호 확인: 로봇 앞 1 m에만 물체를 두고 slam.launch.py를 띄운 뒤 RViz의 /scan에서
 # 그 점이 base_link 정면(+x)에 찍히는지 봅니다. 좌우가 뒤집히면 yaw에 pi를 더합니다.
 #로봇 본체 기준 LIDAR의 장착 위치, 각도
+# 2026-10-11 사용자: 로봇 중앙, 높이 170 mm.
+# yaw 실측(2026-10-11, inverted: true 적용 후): 0.1 m/s로 15 cm 전진 시 스캔이 라이다 기준
+# +166.2°, 후진 시 -16.2° 방향으로 이동 → 로봇 정면 = 라이다 +165° → yaw = -165°.
 laser_mount:
   x: 0.0
   y: 0.0
-  z: 0.0
+  z: 0.17
   roll: 0.0
   pitch: 0.0
-  yaw: 0.0
+  yaw: -2.880
 
 # 로봇 본체 기준 D415(camera_link)의 장착 위치와 각도입니다.
 # realsense2_camera가 camera_link 아래의 광학 프레임 TF를 스스로 발행하므로

@@ -91,6 +91,8 @@ def generate_bringup(demo=False, backend=None):
             DeclareLaunchArgument('start_encoder', default_value='true'),
             # Nucleo UART (Pi GPIO 14/15)
             DeclareLaunchArgument('encoder_port', default_value='/dev/ttyAMA0'),
+            # true면 encoder_odom이 /cmd_vel로 모터를 움직입니다 (ROBOT40_V3)
+            DeclareLaunchArgument('drive', default_value='false'),
         ])
 
     # ── nodes: 인자 값이 정해진 뒤 실행되어 "실제로 띄울 것" 목록을 돌려줌 ──
@@ -159,6 +161,7 @@ def generate_bringup(demo=False, backend=None):
                 launch_arguments={
                     'encoder_port': LaunchConfiguration('encoder_port'),
                     'use_sim_time': LaunchConfiguration('use_sim_time'),
+                    'drive': LaunchConfiguration('drive'),
                 }.items()))
 
         # ④ SLAM 백엔드 선택 (호출자가 정했으면 그것, 아니면 backend:= 인자)

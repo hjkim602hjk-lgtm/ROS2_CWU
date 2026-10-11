@@ -29,7 +29,10 @@ ydlidar_ros2_driver_node:
     # 1~5점이 버려집니다. 이 경고는 정상이며 끄려 하지 마십시오.
     fixed_resolution: true
     reversion: false
-    inverted: false
+    # 2026-10-11 실측: false면 스캔이 시계방향(좌우 반전)이었습니다. 제자리 좌회전에서
+    # odom +58.1°, 스캔 +57.4° 회전(정상이면 -58°) → 지도가 부채꼴로 번짐.
+    # SDK CYdLidar.cpp: inverted면 angle = 2π - angle (반시계, REP-103).
+    inverted: true
     auto_reconnect: true
     support_motor_dtr: false
     angle_max: 180.0

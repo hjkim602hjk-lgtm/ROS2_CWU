@@ -2,7 +2,7 @@
 # 밀려 들어온 옛 줄을 버리고 최신 줄만 쓰는지, 깨진 줄을 건너뛰는지 확인합니다.
 
 """Guard the line parser: newest sample only, malformed lines skipped."""
-from cwu_base.encoder_odom import latest_sample
+from cwu_base.encoder_odom import drive_frame, latest_sample
 
 
 def test_takes_the_newest_line_not_the_backlog():
@@ -56,3 +56,17 @@ def test_dropped_digit_does_not_teleport_the_robot(monkeypatch):
         node.destroy_node()
     finally:
         rclpy.shutdown()
+
+
+def test_robot40_v3_telemetry_skips_status_lines():
+    # ms,mode,L,R,... ; "# CAL,0.000000,0.000000" must not be read as ticks.
+    lines = [b'1768,8,-75,-70,80,80,412,428,338,12,70,130\r', b'# CAL,0.000000,0.000000\r']
+    assert latest_sample(lines, 2, 3) == (-75, -70)
+
+
+def test_drive_frame():
+    assert drive_frame(0.0, 0.0, 0.2, 700, 30, 130) == b'[D0,0]'
+    assert drive_frame(0.1, 0.0, 0.2, 700, 30, 130) == b'[D70,70]'
+    assert drive_frame(0.0, 1.0, 0.2, 700, 30, 130) == b'[D-70,70]'   # CCW: left back
+    assert drive_frame(0.01, 0.0, 0.2, 700, 30, 130) == b'[D30,30]'   # deadband floor
+    assert drive_frame(1.0, 0.0, 0.2, 700, 30, 130) == b'[D130,130]'  # clamp

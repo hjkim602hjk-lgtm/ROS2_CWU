@@ -22,17 +22,19 @@ constexpr bool INVERT_LEFT_MOTOR=true, INVERT_RIGHT_MOTOR=false;
 constexpr int LEFT_ENCODER_SIGN=-1, RIGHT_ENCODER_SIGN=1;
 constexpr int BASE_PWM=80, MAX_PWM=130, TURN_PWM=90, PSD_THRESHOLD=550;
 constexpr float Kp=0.30f, Ki=0.0f, Kd=0.0f, MAX_CORRECTION=30.0f;
-constexpr uint32_t CONTROL_MS=50, MOTOR_TEST_MS=1000, TELEMETRY_MS=200;
+constexpr uint32_t CONTROL_MS=50, MOTOR_TEST_MS=1000, TELEMETRY_MS=50;
 constexpr uint32_t HEARTBEAT_TIMEOUT_MS=700, ENCODER_TIMEOUT_MS=350;
 constexpr uint32_t DISTANCE_TIMEOUT_MS=15000, CONTINUOUS_LIMIT_MS=10000;
 constexpr uint32_t SETTLE_MS=300, SERVO_STEP_MS=20;
+// Motor start noise spikes PSD over threshold for <1 sample; require it to persist.
+constexpr uint32_t PSD_HOLD_MS=20;
 constexpr float DISTANCE_MM=400.0f, MAX_WHEEL_MISMATCH_MM=40.0f;
 // Do not invent counts/mm. Pi restores calibrated values using [Kleft,right].
 float countsPerMmL=0.0f, countsPerMmR=0.0f;
 
 enum RunMode { MODE_STOP=0, MODE_LEFT_TEST=1, MODE_RIGHT_TEST=2,
   MODE_BOTH_TEST=3, MODE_PID_TEST=4, MODE_PID_CONTINUOUS=5,
-  MODE_AUTO_PSD=6, MODE_DISTANCE=7 };
+  MODE_AUTO_PSD=6, MODE_DISTANCE=7, MODE_DRIVE=8 };
 struct Parser { char buf[48]; uint8_t len; bool active; bool bad; };
 // Explicit prototypes avoid Arduino auto-prototype ordering for custom types.
 bool startMode(RunMode mode, uint8_t source);
@@ -49,11 +51,16 @@ int lastSignL=0, lastSignR=0;
 uint32_t zeroTimeL=0, zeroTimeR=0;
 uint32_t lastMotorTime=0, lastServoTime=0, lastControlTime=0, lastTelemetryTime=0;
 uint32_t modeStartTime=0, lastPulseL=0, lastPulseR=0;
+uint32_t frontOverSince=0, pivotOverSince=0;
 uint32_t heartbeatTime[2]={0,0}; bool heartbeatSeen[2]={false,false};
 uint8_t motionOwner=0, calibrationOwner=0;
 int32_t startL=0, startR=0, previousL=0, previousR=0, watchedL=0, watchedR=0;
 float integral=0, previousError=0;
 int wrongCycles=0;
+// w/e: l/r wheel test without the 1 s limit (heartbeat + 10 s cap) for tick counting.
+bool wheelHold=false;
+// [Dl,r]: Pi-commanded signed PWM (ROS cmd_vel), heartbeat required, no time cap.
+int driveL=0, driveR=0;
 bool telemetryStream=false, helpPending=false, statusPending=false;
 bool calibrating=false, settling=false;
 uint32_t calibrationTime=0, settleStart=0;
@@ -75,7 +82,7 @@ void stopMotors() {
   currentLeftPWM=currentRightPWM=targetLeftPWM=targetRightPWM=0;
 }
 void halt(const char *reason) {
-  stopMotors(); currentMode=MODE_STOP; settling=false;
+  stopMotors(); currentMode=MODE_STOP; settling=false; wheelHold=false;
   servoLeftTarget=servoLeftAngle; servoRightTarget=servoRightAngle;
   say(reason);
 }
@@ -122,12 +129,12 @@ void updateServos() {
 }
 bool calibrated() { return countsPerMmL>0 && countsPerMmR>0; }
 bool needsHeartbeat() {
-  return currentMode==MODE_DISTANCE || currentMode==MODE_PID_CONTINUOUS || currentMode==MODE_AUTO_PSD;
+  return currentMode==MODE_DISTANCE || currentMode==MODE_PID_CONTINUOUS || currentMode==MODE_AUTO_PSD || currentMode==MODE_DRIVE || wheelHold;
 }
 bool startMode(RunMode mode,uint8_t source) {
   if(currentMode!=MODE_STOP || settling || calibrating || servoBusy()) { say("# REJECT BUSY"); return false; }
   if(mode==MODE_DISTANCE && !calibrated()) { say("# REJECT CALIBRATE_FIRST"); return false; }
-  if(mode==MODE_DISTANCE || mode==MODE_PID_CONTINUOUS || mode==MODE_AUTO_PSD) {
+  if(mode==MODE_DISTANCE || mode==MODE_PID_CONTINUOUS || mode==MODE_AUTO_PSD || mode==MODE_DRIVE || wheelHold) {
     if(!heartbeatSeen[source] || millis()-heartbeatTime[source]>HEARTBEAT_TIMEOUT_MS) {
       say("# REJECT HEARTBEAT_REQUIRED"); return false;
     }
@@ -137,6 +144,7 @@ bool startMode(RunMode mode,uint8_t source) {
   integral=previousError=0; wrongCycles=0; distanceL=distanceR=0;
   reachedL=reachedR=false;
   modeStartTime=lastControlTime=lastPulseL=lastPulseR=millis();
+  frontOverSince=pivotOverSince=0; driveL=driveR=0;
   currentMode=mode; say("# START"); return true;
 }
 void reportDistance(Stream &out) {
@@ -195,6 +203,12 @@ void checkStall() {
   if((currentLeftPWM!=0 && now-lastPulseL>=ENCODER_TIMEOUT_MS) ||
      (currentRightPWM!=0 && now-lastPulseR>=ENCODER_TIMEOUT_MS)) halt("# ABORT ENCODER_NO_PULSE");
 }
+// True once `over` has held for PSD_HOLD_MS; since=0 means currently clear.
+bool psdHeld(bool over,uint32_t &since,uint32_t now) {
+  if(!over) { since=0; return false; }
+  if(!since) since=now;
+  return now-since>=PSD_HOLD_MS;
+}
 void runPSDAuto() {
   int f=analogRead(PSD_FRONT), b=analogRead(PSD_REAR), l=analogRead(PSD_L), r=analogRead(PSD_R);
   if(f<PSD_THRESHOLD && l<PSD_THRESHOLD && r<PSD_THRESHOLD) { setMotors(BASE_PWM,BASE_PWM); return; }
@@ -209,7 +223,20 @@ void reportCalibration(Stream &out) {
 bool validScale(float l,float r) {
   return isfinite(l) && isfinite(r) && l>=0.01f && r>=0.01f && l<=10000 && r<=10000 && l/r>=0.5f && l/r<=2.0f;
 }
+bool driveFrame(char *s,uint8_t source) {
+  char *end; long l=strtol(s+1,&end,10);
+  if(end==s+1 || *end!=',') return false;
+  char *next=end+1; long r=strtol(next,&end,10);
+  if(end==next || *end || labs(l)>MAX_PWM || labs(r)>MAX_PWM) return false;
+  if(currentMode==MODE_STOP) {
+    if(!startMode(MODE_DRIVE,source)) return true;
+  } else if(currentMode!=MODE_DRIVE || source!=motionOwner) { say("# REJECT BUSY"); return true; }
+  driveL=l; driveR=r;
+  return true;
+}
 void frameCommand(char *s,uint8_t source) {
+  // Drive frames stream at 20 Hz while moving, so they bypass the STOP-only check.
+  if(s[0]=='D') { if(!driveFrame(s,source)) say("# REJECT DRIVE_FORMAT"); return; }
   if(currentMode!=MODE_STOP || settling || servoBusy()) { say("# REJECT BUSY"); return; }
   if((s[0]=='L' || s[0]=='R') && strlen(s)==4) {
     for(int i=1;i<4;++i) if(s[i]<'0' || s[i]>'9') { say("# REJECT SERVO_FORMAT"); return; }
@@ -249,6 +276,11 @@ void command(char c,uint8_t source) {
   if(c=='t') { telemetryStream=!telemetryStream; say(telemetryStream?"Telemetry = ON":"Telemetry = OFF"); return; }
   if(c=='l') { startMode(MODE_LEFT_TEST,source); return; }
   if(c=='r') { startMode(MODE_RIGHT_TEST,source); return; }
+  if((c=='w' || c=='e') && currentMode==MODE_STOP) {
+    wheelHold=true;
+    if(!startMode(c=='w'?MODE_LEFT_TEST:MODE_RIGHT_TEST,source)) wheelHold=false;
+    return;
+  }
   if(c=='b') { startMode(MODE_BOTH_TEST,source); return; }
   if(c=='p') { startMode(MODE_PID_TEST,source); return; }
   if(c=='P') { startMode(MODE_PID_CONTINUOUS,source); return; }
@@ -305,6 +337,8 @@ void help(Stream &out) {
   out.println("# c: manual calibration begin; push forward then [C400]");
   out.println("# [Kleft,right]: restore counts/mm (RAM only)");
   out.println("# l/r/b/p: left/right/both/PID 1 sec; l/r are NOT turns");
+  out.println("# w/e: left/right wheel until q, heartbeat required, max 10 sec");
+  out.println("# [D80,-80]: signed PWM drive (ROS), ! heartbeat, front PSD blocks forward");
   out.println("# P/a: continuous PID/PSD, heartbeat required, max 10 sec");
   out.println("# q or space: STOP; z: STOP+zero counts; t: stream toggle; s: status");
   out.println("# 1/2/3: left30/60/90; 4/5/6: right30/60/90");
@@ -334,10 +368,10 @@ void loop() {
   if(currentMode!=MODE_STOP) {
     if(needsHeartbeat() && now-heartbeatTime[motionOwner]>HEARTBEAT_TIMEOUT_MS) halt("# ABORT HEARTBEAT_TIMEOUT");
     else if(currentMode==MODE_DISTANCE && now-modeStartTime>=DISTANCE_TIMEOUT_MS) halt("# ABORT DISTANCE_TIMEOUT");
-    else if((currentMode==MODE_PID_CONTINUOUS || currentMode==MODE_AUTO_PSD) && now-modeStartTime>=CONTINUOUS_LIMIT_MS) halt("# ABORT TEST_TIME_LIMIT");
-    else if(currentMode!=MODE_AUTO_PSD && analogRead(PSD_FRONT)>=PSD_THRESHOLD) halt("# ABORT PSD_FRONT");
-    else if((currentMode==MODE_LEFT_TEST || currentMode==MODE_RIGHT_TEST) &&
-            (analogRead(PSD_REAR)>=PSD_THRESHOLD || analogRead(PSD_L)>=PSD_THRESHOLD || analogRead(PSD_R)>=PSD_THRESHOLD)) halt("# ABORT PSD_PIVOT");
+    else if((currentMode==MODE_PID_CONTINUOUS || currentMode==MODE_AUTO_PSD || wheelHold) && now-modeStartTime>=CONTINUOUS_LIMIT_MS) halt("# ABORT TEST_TIME_LIMIT");
+    else if(psdHeld(currentMode!=MODE_AUTO_PSD && currentMode!=MODE_DRIVE && analogRead(PSD_FRONT)>=PSD_THRESHOLD,frontOverSince,now)) halt("# ABORT PSD_FRONT");
+    else if(psdHeld((currentMode==MODE_LEFT_TEST || currentMode==MODE_RIGHT_TEST) &&
+            (analogRead(PSD_REAR)>=PSD_THRESHOLD || analogRead(PSD_L)>=PSD_THRESHOLD || analogRead(PSD_R)>=PSD_THRESHOLD),pivotOverSince,now)) halt("# ABORT PSD_PIVOT");
   }
   if(currentMode==MODE_DISTANCE) checkDistance();
   switch(currentMode) {
@@ -346,9 +380,15 @@ void loop() {
     case MODE_BOTH_TEST: setMotors(BASE_PWM,BASE_PWM); break;
     case MODE_PID_TEST: case MODE_PID_CONTINUOUS: case MODE_DISTANCE: runPID(); break;
     case MODE_AUTO_PSD: runPSDAuto(); break;
+    case MODE_DRIVE: {
+      // Front PSD blocks forward motion only, so the robot can still turn/back away.
+      bool blocked=psdHeld(analogRead(PSD_FRONT)>=PSD_THRESHOLD,frontOverSince,now);
+      if(blocked && driveL+driveR>0) setMotors(0,0); else setMotors(driveL,driveR);
+      break;
+    }
     default: break;
   }
-  if(currentMode>=MODE_LEFT_TEST && currentMode<=MODE_PID_TEST && now-modeStartTime>=MOTOR_TEST_MS) halt("# DONE TIMED_TEST");
+  if(!wheelHold && currentMode>=MODE_LEFT_TEST && currentMode<=MODE_PID_TEST && now-modeStartTime>=MOTOR_TEST_MS) halt("# DONE TIMED_TEST");
   updateMotors();
   if(currentMode!=MODE_STOP) checkStall();
   if(settling && now-settleStart>=SETTLE_MS) {

@@ -31,6 +31,7 @@ import re    # 정규식: "ENC,1499,1406" 에서 숫자만 뽑기
 import rclpy                    # ROS 2 파이썬 클라이언트 라이브러리. 노드를 만들고 돌리는 뼈대
 import serial                   # pyserial: 시리얼 포트 열기/읽기 (apt: python3-serial)
 from geometry_msgs.msg import Quaternion, TransformStamped  # 회전(쿼터니언), TF 한 개
+from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry                           # /odom 메시지 형식
 from rclpy.node import Node                                 # 모든 노드의 부모 클래스
 from tf2_ros import TransformBroadcaster                    # TF 를 발행하는 도구
@@ -63,6 +64,22 @@ SAMPLE_PERIOD = 0.1
 #   돌려주는 값: (왼쪽, 오른쪽) 정수 튜플, 쓸 만한 줄이 없으면 None
 #   ROS 를 안 쓰는 함수라 테스트에서 따로 불러 시험할 수 있습니다.
 # ─────────────────────────────────────────────────────────────────────────────
+def drive_frame(linear, angular, separation, pwm_per_mps, pwm_min, pwm_max):
+    """cmd_vel -> ROBOT40_V3 "[Dleft,right]" open-loop signed PWM frame.
+
+    ponytail: open-loop PWM proportional to wheel speed; replace with a firmware
+    wheel-speed PI loop when Nav2 needs accurate velocity tracking.
+    """
+    def pwm(speed):
+        value = speed * pwm_per_mps
+        if abs(value) < 0.5:
+            return 0
+        value = math.copysign(max(abs(value), pwm_min), value)
+        return int(round(max(-pwm_max, min(pwm_max, value))))
+    half = angular * separation / 2
+    return f'[D{pwm(linear - half)},{pwm(linear + half)}]'.encode()
+
+
 def latest_sample(lines, left_field, right_field):
     """완성된 줄들 중 가장 최신의 유효한 (왼쪽, 오른쪽) 틱을 돌려줍니다.
 
@@ -73,6 +90,8 @@ def latest_sample(lines, left_field, right_field):
     """
     # reversed(): 뒤(최신)에서부터 봅니다. 멀쩡한 줄을 찾으면 바로 끝.
     for line in reversed(lines):
+        if line.startswith(b'#'):
+            continue  # ROBOT40_V3 status lines ("# CAL,0.000000,...") also hold numbers
         # 줄에서 숫자만 전부 뽑기. b"ENC,1499,1406" → [b"1499", b"1406"]
         fields = NUMBER.findall(line)
         # 필요한 번호까지 숫자가 있어야 함. 잘린 줄 b"ENC,14" 은 숫자가 1개라 탈락.
@@ -108,6 +127,9 @@ class EncoderOdometry(Node):
             ('publish_tf', True),                               # TF 도 낼지
             ('pose_covariance', [0.01, 0.01, 0.05]),            # 위치 불확실성 (x, y, yaw)
             ('twist_covariance', [0.01, 0.01, 0.05]),           # 속도 불확실성
+            # ROBOT40_V3 주행: /cmd_vel -> [Dl,r] PWM + '!' 하트비트 (drive: true 일 때만)
+            ('drive', False), ('pwm_per_mps', UNSET), ('pwm_min', 0), ('pwm_max', 130),
+            ('cmd_timeout', 0.5),
         ])
         # 파라미터 객체 목록 → {이름: 값} 사전으로 정리. 이후 self.cfg['port'] 처럼 꺼내 씁니다.
         self.cfg = {d.name: d.value for d in p}
@@ -142,6 +164,14 @@ class EncoderOdometry(Node):
         # create_timer(주기초, 함수): 그 주기마다 함수를 자동 호출. rclpy.spin() 이 돌려줍니다.
         self.create_timer(0.005, self.poll)                      # 5 ms 마다 시리얼 확인
         self.create_timer(self.cfg['timeout'], self.check_link)  # 0.5 s 마다 끊김 확인
+        if self.cfg['drive']:
+            if self.cfg['pwm_per_mps'] <= 0:
+                raise ValueError('drive: true 에는 실측 pwm_per_mps 가 필요합니다.')
+            self.cmd, self.cmd_stamp = (0.0, 0.0), None
+            self.create_subscription(Twist, 'cmd_vel', self.on_cmd_vel, 10)
+            # 20 Hz: 펌웨어 하트비트 제한 0.7 s 안에 여러 번 보내고, 정지 상태에서도
+            # MODE_DRIVE를 유지해 텔레메트리(엔코더)가 계속 나오게 합니다.
+            self.create_timer(0.05, self.send_drive)
 
     # 밑줄(_)로 시작하는 이름 = "이 클래스 안에서만 쓰는 함수"라는 파이썬 관례
     def _require_measured_values(self):
@@ -172,6 +202,9 @@ class EncoderOdometry(Node):
         #   b"ENC,1,2\nENC,3,4\nENC,5" → lines=[b"ENC,1,2", b"ENC,3,4"], buffer=b"ENC,5"
         #   *lines 는 "앞의 나머지 전부를 리스트로" 받는 파이썬 문법
         *lines, self.buffer = self.buffer.split(b'\n')
+        for line in lines:
+            if line.startswith((b'# ABORT', b'# REJECT')):
+                self.get_logger().warn(f'보드: {line.decode(errors="replace").strip()}')
         # 버퍼가 너무 커지면 앞(오래된 쪽)을 잘라냄. 뒤 MAX_BUFFER 바이트만 남김.
         del self.buffer[:-MAX_BUFFER]
         # 이번에 완성된 줄 중 최신 한 줄만 사용
@@ -265,6 +298,23 @@ class EncoderOdometry(Node):
         self.tf.sendTransform(transform)
 
     # check_link: 0.5 s 마다 타이머가 부름. 데이터가 끊겼는지 감시합니다.
+    def on_cmd_vel(self, msg):
+        self.cmd = (msg.linear.x, msg.angular.z)
+        self.cmd_stamp = self.get_clock().now()
+
+    def send_drive(self):
+        """Latest cmd_vel, or zero once it is older than cmd_timeout."""
+        linear, angular = self.cmd
+        if self.cmd_stamp is None or (
+                self.get_clock().now() - self.cmd_stamp).nanoseconds / 1e9 > self.cfg['cmd_timeout']:
+            linear = angular = 0.0
+        frame = drive_frame(linear, angular, self.cfg['wheel_separation'],
+                            self.cfg['pwm_per_mps'], self.cfg['pwm_min'], self.cfg['pwm_max'])
+        try:
+            self.serial.write(b'!' + frame)
+        except (serial.SerialException, OSError) as e:
+            self.get_logger().error(f'주행 명령 전송 실패: {e}')
+
     def check_link(self):
         """틱이 끊기거나 처음부터 오지 않으면 알립니다. 자세를 추정하지는 않습니다.
 
@@ -305,6 +355,8 @@ def main():
     except KeyboardInterrupt:  # Ctrl+C 는 정상 종료로 취급
         pass
     finally:                   # 에러가 나든 안 나든 항상 실행되는 정리 구간
+        if node.cfg['drive']:
+            node.serial.write(b'q')  # 종료 시 즉시 정지 (하트비트 만료 0.7 s 를 기다리지 않음)
         node.serial.close()    # 포트 닫기 (잠금 해제 → 다른 노드가 열 수 있게)
         node.destroy_node()
         rclpy.try_shutdown()   # ROS 2 통신 종료

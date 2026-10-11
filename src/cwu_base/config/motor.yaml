@@ -18,7 +18,7 @@ motor_bridge:
     ki_right: -1.0
     pwm_limit: -1
     max_accel_ticks: -1.0
-    robot_radius: -1.0
+    robot_radius: 0.165 # 원형 지름 330 mm (2026-10-11 사용자)
     braking_distance: -1.0
     safety_margin: -1.0
     safety_latency: -1.0 # >= command_timeout + .05 + MCU timeout + max(scan,encoder,TF timeout) + .2
