@@ -6,7 +6,13 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
-#include "ServoSettings.h"
+
+// Servo settings (was ServoSettings.h, not committed). START/GRIP from this file's help text.
+// Calibrate with [L105]/[R095], then copy the found angles here.
+constexpr int SERVO_LEFT_START=70, SERVO_RIGHT_START=130;
+constexpr int SERVO_LEFT_GRIP=130, SERVO_RIGHT_GRIP=70;
+// ponytail: full 0~180 while the gripper's mechanical limits are unknown; narrow once measured.
+constexpr int SERVO_LEFT_MIN=0, SERVO_LEFT_MAX=180, SERVO_RIGHT_MIN=0, SERVO_RIGHT_MAX=180;
 
 Uart PiSerial(PC_11, PC_10); // RX, TX
 constexpr uint32_t LEFT_PWM=D6, LEFT_DIR=D7, RIGHT_DIR=D8, RIGHT_PWM=PA7_ALT3;
@@ -302,7 +308,7 @@ void help(Stream &out) {
   out.println("# P/a: continuous PID/PSD, heartbeat required, max 10 sec");
   out.println("# q or space: STOP; z: STOP+zero counts; t: stream toggle; s: status");
   out.println("# 1/2/3: left30/60/90; 4/5/6: right30/60/90");
-  out.println("# 7: L80 R130; 8: L130 R80; [L105]/[R095]: angle (STOP only)");
+  out.println("# 7: start pose; 8: grip pose; [L105]/[R095]: angle 0~180, 3 digits (STOP only)");
 }
 void setup() {
   Serial.begin(115200); PiSerial.begin(115200);
