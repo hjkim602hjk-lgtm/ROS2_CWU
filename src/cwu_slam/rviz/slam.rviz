@@ -1,6 +1,3 @@
-# 개발용 RViz 화면 설정 파일입니다. 지도(/map), LiDAR 측정점(/scan), TF 좌표계를 표시합니다.
-# map 좌표계를 기준으로 위에서 내려다보는 화면을 구성하며, SLAM 계산 자체는 수행하지 않습니다.
-
 Panels:
   - Class: rviz_common/Displays
     Help Height: 70
@@ -8,7 +5,7 @@ Panels:
     Property Tree Widget:
       Expanded: ~
       Splitter Ratio: 0.5
-    Tree Height: 579
+    Tree Height: 70
   - Class: rviz_common/Views
     Expanded:
       - /Current View1
@@ -53,7 +50,7 @@ Visualization Manager:
       Enabled: true
       Invert Rainbow: false
       Max Color: 255; 255; 255
-      Max Intensity: 4096
+      Max Intensity: 0
       Min Color: 0; 0; 0
       Min Intensity: 0
       Name: Scan
@@ -98,7 +95,6 @@ Visualization Manager:
                 {}
       Update Interval: 0
       Value: true
-    # Robot webcam (Pi usb_cam JPEG -> tools/webcam_view.py on the PC -> /webcam/view)
     - Class: rviz_default_plugins/Image
       Enabled: true
       Max Value: 1
@@ -126,14 +122,29 @@ Visualization Manager:
     - Class: rviz_default_plugins/Measure
       Line color: 128; 128; 0
     - Class: rviz_default_plugins/SetInitialPose
+      Covariance x: 0.25
+      Covariance y: 0.25
+      Covariance yaw: 0.06853891909122467
       Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
         Value: /initialpose
     - Class: rviz_default_plugins/SetGoal
       Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
         Value: /goal_pose
     - Class: rviz_default_plugins/PublishPoint
       Single click: true
       Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
         Value: /clicked_point
   Transformation:
     Current:
@@ -141,7 +152,7 @@ Visualization Manager:
   Value: true
   Views:
     Current:
-      Angle: 0
+      Angle: 0.009999999776482582
       Class: rviz_default_plugins/TopDownOrtho
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
@@ -151,20 +162,23 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Scale: 220
+      Scale: 238.83868408203125
       Target Frame: map
       Value: TopDownOrtho (rviz_default_plugins)
-      X: 0
-      Y: 0
+      X: 0.5463141798973083
+      Y: 0.2210797667503357
     Saved: ~
 Window Geometry:
-  Webcam:
-    collapsed: false
   Displays:
     collapsed: false
-  Height: 1040
+  Height: 1016
   Hide Left Dock: false
   Hide Right Dock: false
-  Width: 1920
-  X: 1920
-  Y: 0
+  QMainWindow State: 000000ff00000000fd0000000100000000000001cb0000039efc0200000003fb0000000c00570065006200630061006d010000003d000001f90000002800fffffffb000000100044006900730070006c006100790073010000023c000000c9000000c900fffffffb0000000a00560069006500770073010000030b000000d0000000a400ffffff000005690000039e00000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  Views:
+    collapsed: false
+  Webcam:
+    collapsed: false
+  Width: 1850
+  X: 1990
+  Y: 27
