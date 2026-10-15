@@ -93,7 +93,7 @@ local_costmap:
       width: 3
       height: 3
       resolution: 0.05
-      robot_radius: 0.165
+      robot_radius: 0.150
       plugins: [obstacle_layer, inflation_layer]
       obstacle_layer:
         plugin: nav2_costmap_2d::ObstacleLayer
@@ -118,9 +118,10 @@ local_costmap:
       inflation_layer:
         plugin: nav2_costmap_2d::InflationLayer
         # 장애물은 400 mm 격자에 정렬되고 간격도 400 mm 배수입니다.
-        # robot_radius 0.165(지름 330 mm)면 400 mm 통로에서 양옆 여유가 35 mm뿐입니다.
-        # inflation_radius를 더 키우면 800 mm 통로까지 막히므로 0.35에서 멈춥니다.
-        inflation_radius: 0.35
+        # 실제 몸체 0.165(지름 330 mm)면 400 mm 통로에서 양옆 여유가 35 mm뿐입니다.
+        # 2026-10-15 사용자 결정: robot_radius 0.150, inflation_radius 0.35 → 0.20 → 0.17로 완화
+        # (모의 경기장에서 지도상 열린 길을 RPP가 "collision ahead"로 계속 거부).
+        inflation_radius: 0.17
         cost_scaling_factor: 3.0
 
 global_costmap:
@@ -143,7 +144,7 @@ global_costmap:
       origin_y: -4.0
       resolution: 0.05
       track_unknown_space: true
-      robot_radius: 0.165
+      robot_radius: 0.150
       plugins: [obstacle_layer, inflation_layer]
       obstacle_layer:
         plugin: nav2_costmap_2d::ObstacleLayer
@@ -164,7 +165,7 @@ global_costmap:
           inf_is_valid: false
       inflation_layer:
         plugin: nav2_costmap_2d::InflationLayer
-        inflation_radius: 0.35
+        inflation_radius: 0.17
         cost_scaling_factor: 3.0
 
 planner_server:

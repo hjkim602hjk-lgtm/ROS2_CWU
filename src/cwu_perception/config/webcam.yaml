@@ -1,0 +1,18 @@
+# 로봇 USB 웹캠(Microdia "USB Live camera", /dev/video0) 드라이버 usb_cam 설정입니다.
+# camera.launch.py driver:=webcam(기본)이 /webcam 네임스페이스로 띄웁니다 → /webcam/image_raw, camera_info.
+# 검출기는 camera_info의 초점거리로 방향을 계산하므로 webcam_info.yaml 이 반드시 있어야 합니다.
+
+/**:
+  ros__parameters:
+    video_device: /dev/video0
+    pixel_format: mjpeg2rgb      # 이 카메라는 640x480 YUYV도 되지만 MJPEG가 USB 대역을 덜 씀
+    image_width: 640
+    image_height: 480
+    framerate: 10.0              # 2026-10-11 실행값. 큐브 정렬에는 충분하고 Pi CPU를 아낌
+    io_method: mmap
+    frame_id: webcam_optical_frame
+    camera_name: webcam
+    camera_info_url: package://cwu_perception/config/webcam_info.yaml
+    # 자동 노출·화이트밸런스는 경기장 조명에서 수렴값을 읽어 고정해야 합니다(규정 2.3, 공개 후 수정 불가).
+    autoexposure: true
+    auto_white_balance: true

@@ -45,6 +45,10 @@ def largest_blob(mask, min_area_px, max_aspect, min_fill):
 
     A 50 mm cube is convex and roughly square in the image, so a low fill ratio
     or a long thin box is reflection or clutter, not the target.
+    Regions cut by the left/right image edge are skipped: their shape cannot be judged,
+    and the cut end of a long red object looks square (2026-10-15 arena: a far orange lid
+    passed at -32..-20 deg each spin, then vanished once fully in view). The bottom edge
+    is allowed — the cube leaves the frame downward on the final approach.
     """
     # findContours: 흰 덩어리들의 외곽선 목록. RETR_EXTERNAL = 바깥 외곽선만
     # [-2] : OpenCV 버전마다 반환 개수가 달라서(2개/3개) 뒤에서 두 번째를 집으면 항상 외곽선 목록
@@ -58,6 +62,8 @@ def largest_blob(mask, min_area_px, max_aspect, min_fill):
         x, y, w, h = cv2.boundingRect(contour)
         if not h or not w:
             continue  # 0 으로 나누기 방지
+        if x == 0 or x + w >= mask.shape[1]:
+            continue  # 좌우 가장자리에 잘린 덩어리: 모양을 판단할 수 없음
         aspect = max(w / h, h / w)  # 1 이면 정사각형, 클수록 길쭉
         if aspect > max_aspect or area / float(w * h) < min_fill:
             continue

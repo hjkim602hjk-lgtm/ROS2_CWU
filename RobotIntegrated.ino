@@ -8,7 +8,9 @@
 #include <stdlib.h>
 #include <string.h>
 constexpr int SERVO_LEFT_START=40, SERVO_RIGHT_START=140;
-constexpr int SERVO_LEFT_GRIP=105, SERVO_RIGHT_GRIP=75;
+// 2026-10-14: 105/75 held the cube but the right servo hunted (opened/closed by itself) -> 3 deg looser each.
+// 2026-10-15: left still acted up at 102 -> left 3 deg looser again.
+constexpr int SERVO_LEFT_GRIP=99, SERVO_RIGHT_GRIP=78;
 constexpr int SERVO_LEFT_MIN=0, SERVO_LEFT_MAX=180;
 constexpr int SERVO_RIGHT_MIN=0, SERVO_RIGHT_MAX=180;
 
@@ -31,10 +33,20 @@ constexpr uint32_t VELOCITY_TIMEOUT_MS=300;
 // Initial values only: NOT the experimentally tuned straight-sync PID gains.
 constexpr float SPEED_KP=0.25f, SPEED_KI=0.60f, SPEED_FF=0.45f, SPEED_STATIC=35.0f;
 constexpr float MAX_V_MM_S=150.0f, MAX_W_RAD_S=1.2f, MAX_WHEEL_MM_S=180.0f;
+constexpr float IN_PLACE_MM_S=10.0f; // |forward speed| at or below this = turning in place
 bool navArmed=false, navStream=false;
+// [PF0] while carrying: the held target sits in front of the front PSD. Side/rear checks stay on.
+bool frontPsdOn=true;
+// Side/rear PSD stops in velocity mode. 2026-10-15 test: off — in the arena Nav2's arcs past obstacles
+// kept tripping the side PSDs (right 930/832) and the robot circled; lidar collision monitor still guards.
+constexpr bool SIDE_REAR_PSD_STOP=false;
 float velocityL=0,velocityR=0,speedIL=0,speedIR=0;
 int speedSignL=0,speedSignR=0;
 uint32_t velocityTime=0;
+// PSD stop only when the condition holds this long. Single noisy samples run 70-150 above the
+// median (2026-10-14), so one sample >= 550 stopped the robot with the cube still short of the jaws.
+constexpr uint32_t PSD_HOLD_MS=60;
+bool psdHigh=false; uint32_t psdSince=0;
 // Empirical distance calibration validated with 400 mm and 1000 mm trials.
 float countsPerMmL=(5687.0f/1460.0f)*(40.0f/26.0f);
 float countsPerMmR=(5600.0f/1460.0f)*(40.0f/26.0f);
@@ -147,7 +159,7 @@ bool startMode(RunMode mode,uint8_t source) {
       say("# REJECT HEARTBEAT_REQUIRED"); return false;
     }
   }
-  stopMotors(); motionOwner=source;
+  stopMotors(); motionOwner=source; psdHigh=false;
   if(mode!=MODE_VELOCITY) navArmed=false;
   speedIL=speedIR=0; speedSignL=speedSignR=0;
   snapshot(startL,startR); previousL=watchedL=startL; previousR=watchedR=startR;
@@ -237,14 +249,23 @@ void runVelocity() {
   if(wrong) ++wrongCycles; else wrongCycles=0;
   if(wrongCycles>=3) halt("# ABORT ENCODER_DIRECTION");
 }
+bool blockedPSD();
+bool psdBlocked(uint32_t now) {
+  if(!blockedPSD()) { psdHigh=false; return false; }
+  if(!psdHigh) { psdHigh=true; psdSince=now; }
+  return now-psdSince>=PSD_HOLD_MS;
+}
 bool blockedPSD() {
   int f=analogRead(PSD_FRONT),b=analogRead(PSD_REAR),l=analogRead(PSD_L),r=analogRead(PSD_R);
   if(currentMode==MODE_VELOCITY) {
-    bool front=velocityL>0 || velocityR>0 || currentLeftPWM>0 || currentRightPWM>0;
-    bool rear=velocityL<0 || velocityR<0 || currentLeftPWM<0 || currentRightPWM<0;
-    bool rotate=fabsf(velocityL-velocityR)>1 || (currentLeftPWM*currentRightPWM<0);
-    return (front && f>=PSD_THRESHOLD) || (rear && b>=PSD_THRESHOLD) ||
-           (rotate && (l>=PSD_THRESHOLD || r>=PSD_THRESHOLD));
+    // Direction from the body's forward speed, not per-wheel signs. In-place rotation keeps the
+    // round 330 mm body where it is, so no PSD stops it: walls 30-50 mm away read 616-886
+    // (2026-10-14) and froze the robot in a 400 mm cell. Lidar still watches those walls.
+    float v=(velocityL+velocityR)/2.0f;
+    bool front=v>IN_PLACE_MM_S, rear=v<-IN_PLACE_MM_S;
+    bool arc=(front || rear) && fabsf(velocityL-velocityR)>1;
+    return (front && frontPsdOn && f>=PSD_THRESHOLD) ||
+           (SIDE_REAR_PSD_STOP && ((rear && b>=PSD_THRESHOLD) || (arc && (l>=PSD_THRESHOLD || r>=PSD_THRESHOLD))));
   }
   if(turning() || currentMode==MODE_LEFT_TEST || currentMode==MODE_RIGHT_TEST)
     return f>=PSD_THRESHOLD || b>=PSD_THRESHOLD || l>=PSD_THRESHOLD || r>=PSD_THRESHOLD;
@@ -279,6 +300,9 @@ void frameCommand(char *s,uint8_t source) {
   if(strcmp(s,"ARM")==0) {
     if(source!=0 || currentMode!=MODE_STOP || settling || calibrating || servoBusy()) { say("# REJECT ARM_STATE"); return; }
     navArmed=true; velocityTime=millis(); say("# ARMED"); return;
+  }
+  if(strcmp(s,"PF0")==0 || strcmp(s,"PF1")==0) {
+    frontPsdOn=s[2]=='1'; say(frontPsdOn?"# FRONT_PSD_ON":"# FRONT_PSD_OFF"); return;
   }
   if(s[0]=='V') {
     char *end; float v=strtof(s+1,&end);
@@ -421,7 +445,10 @@ void help(Stream &out) {
   out.println("# Velocity commands >=10Hz; timeout300ms disarms. ! cannot extend velocity command");
   out.println("# Velocity PI gains are initial/unvalidated. q stops and disarms");
   out.println("# [N1]/[N0]:20Hz telemetry on/off; s:status; h:help; z:stop+zero");
-  out.println("# [Kleft,right]:counts/mm RAM; 7/c:open40/140; 8:grip105/75");
+  out.println("# [PF0]/[PF1]: front PSD stop off/on in velocity mode (carrying)");
+  out.println("# PSD stop needs >=550 held 60ms");
+  out.println(SIDE_REAR_PSD_STOP?"# SIDE_REAR_PSD_STOP ON":"# SIDE_REAR_PSD_STOP OFF (front only)");
+  out.println("# [Kleft,right]:counts/mm RAM; 7/c:open40/140; 8:grip99/78");
   out.println("# [L105]/[R075]:servo angle; [AUTO] disabled; navigation belongs on Pi");
   out.print("# TRACK_MM,"); out.println(TRACK_MM,3);
   reportCalibration(out);
@@ -455,7 +482,7 @@ void loop() {
     else if(needsHeartbeat() && now-heartbeatTime[motionOwner]>HEARTBEAT_TIMEOUT_MS) halt("# ABORT HEARTBEAT_TIMEOUT");
     else if(positioned() && now-modeStartTime>=DISTANCE_TIMEOUT_MS) halt("# ABORT DISTANCE_TIMEOUT");
     else if(currentMode==MODE_PID_CONTINUOUS && now-modeStartTime>=CONTINUOUS_LIMIT_MS) halt("# ABORT TEST_TIME_LIMIT");
-    else if(blockedPSD()) halt("# ABORT PSD_BLOCKED");
+    else if(psdBlocked(now)) halt("# ABORT PSD_BLOCKED");
   }
   if(positioned()) checkDistance();
   switch(currentMode) {

@@ -17,5 +17,6 @@ setup(
     description='Nav2 bringup and the visual servo for the competition arena', license='Apache-2.0',
     tests_require=['pytest'], entry_points={'console_scripts': [
         'target_follower = cwu_nav.target_follower:main',
-        'go_home = cwu_nav.go_home:main']},
+        'go_home = cwu_nav.go_home:main',
+        'mission1 = cwu_nav.mission1:main']},
 )

@@ -3,7 +3,7 @@
 motor_bridge:
   ros__parameters:
     # 2026-10-12: Nav2(cwu_nav nav2.launch drive:=true)가 아래 한계를 읽습니다. 구동은
-    # ROBOT40_V3 + encoder_odom([V] 바퀴 PI)이 맡고 motor_bridge는 쓰지 않습니다.
+    # BASE_NAV_V1 펌웨어 + encoder_odom([V전진,회전])이 맡고 motor_bridge는 쓰지 않습니다.
     calibration_confirmed: true
     mount_calibration_confirmed: true # mount.yaml yaw 176.4° 스캔 정합 실측
     port: /dev/ttyAMA0
@@ -13,16 +13,21 @@ motor_bridge:
     ticks_per_rev: 3009.5 # provisional mean; repeat 10-turn measurement
     left_sign: 1.0
     right_sign: 1.0
-    max_wheel_speed: 0.156 # encoder.yaml max_wheel_tps 900 x 0.1733 mm/틱
+    max_wheel_speed: 0.156 # 2026-10-12 V3 기준. BASE_NAV_V1은 전진 150 mm/s·바퀴 180 mm/s 상한
     kp_left: -1.0
     ki_left: -1.0
     kp_right: -1.0
     ki_right: -1.0
     pwm_limit: -1
     max_accel_ticks: -1.0
-    robot_radius: 0.165 # 원형 지름 330 mm (2026-10-11 사용자)
+    # 실제 몸체는 지름 330 mm(0.165, 2026-10-11 사용자). 2026-10-15 사용자 결정으로 Nav2 기준을 0.150으로 완화:
+    # 모의 경기장에서 RPP가 출구 모서리 근처 경로를 계속 "collision ahead"로 끊어 같은 자리에서 맴돌았음.
+    # 비용지도 두 개와 collision monitor 원(robot_radius + safety_margin = 0.165, 몸체 바깥선)에 같이 들어감.
+    robot_radius: 0.150
     braking_distance: 0.04 # 0.1 m/s에서 정지 명령 후 2.0/1.8 cm (전진/후진), 0.22 s. 최대속도 여유
-    safety_margin: 0.05
+    # collision monitor 원 반경 = robot_radius + safety_margin. 400 mm 칸·통로 중앙에서 벽은 0.20 m라
+    # 0.215(여유 0.05)면 벽 점이 처음부터 원 안 → 출발 칸에서 아예 못 움직임. 0.18로 둠 (2026-10-14).
+    safety_margin: 0.015
     safety_latency: 0.3 # 스캔 주기 0.1 + 스캔 도착 지연 0.12 + 명령 경로 ~0.05 (collision monitor는 스캔으로 정지)
     max_linear_speed: 0.10
     max_angular_speed: 0.5 # 바퀴 ±0.05 m/s (≈290 틱/s): 바닥에서 멈추지 않는 하한 위

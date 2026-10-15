@@ -2,25 +2,24 @@
 # 밀려 들어온 옛 줄을 버리고 최신 줄만 쓰는지, 깨진 줄을 건너뛰는지 확인합니다.
 
 """Guard the line parser: newest sample only, malformed lines skipped."""
-from cwu_base.encoder_odom import drive_frame, latest_sample, separation
+from cwu_base.encoder_odom import drive_frame, latest_fields
 
 
 def test_takes_the_newest_line_not_the_backlog():
     # 한 번의 read에 밀린 줄이 여러 개 들어와도 최신 값 하나만 씁니다.
     # 옛 줄까지 처리하면 줄 사이 dt가 0에 가까워져 twist가 발산합니다.
     lines = [b'10,20', b'11,21', b'12,22']
-    assert latest_sample(lines, 0, 1) == (12, 22)
+    assert latest_fields(lines, 2) == [12, 22]
 
 
 def test_skips_lines_without_enough_fields():
     # 잘린 첫 줄과 펌웨어 로그 줄은 건너뛰고 그 앞의 온전한 줄을 씁니다.
     lines = [b'5,6', b'BOOT ok', b'3']
-    assert latest_sample(lines, 0, 1) == (5, 6)
+    assert latest_fields(lines, 2) == [5, 6]
 
 
-def test_negative_ticks_and_field_order():
-    assert latest_sample([b'L=-7 R=8'], 0, 1) == (-7, 8)
-    assert latest_sample([b'L=-7 R=8'], 1, 0) == (8, -7)
+def test_negative_ticks():
+    assert latest_fields([b'L=-7 R=8'], 2) == [-7, 8]
 
 
 def test_nucleo_firmware_lines():
@@ -28,12 +27,12 @@ def test_nucleo_firmware_lines():
     # 명령 응답 줄에는 숫자가 없어 건너뛰어야 합니다.
     lines = [b'CHANGWON ROBOT READY\r', b'ENC,1499,1406\r',
              b'ENC,-2023,1893\r', b'CMD: FORWARD\r']
-    assert latest_sample(lines, 0, 1) == (-2023, 1893)
+    assert latest_fields(lines, 2) == [-2023, 1893]
 
 
 def test_nothing_usable_returns_none():
-    assert latest_sample([], 0, 1) is None
-    assert latest_sample([b'', b'BOOT'], 0, 1) is None
+    assert latest_fields([], 2) is None
+    assert latest_fields([b'', b'BOOT'], 2) is None
 
 
 def test_dropped_digit_does_not_teleport_the_robot(monkeypatch):
@@ -42,9 +41,9 @@ def test_dropped_digit_does_not_teleport_the_robot(monkeypatch):
     import rclpy
 
     from cwu_base import encoder_odom
-    monkeypatch.setattr(encoder_odom.serial, 'Serial', lambda *a, **k: None)
-    rclpy.init(args=['--ros-args', '-p', 'wheel_radius:=0.04265',
-                     '-p', 'wheel_separation:=0.20686', '-p', 'ticks_per_rev:=3009.5',
+    monkeypatch.setattr(encoder_odom.serial, 'Serial', lambda *a, **k: FakeSerial())
+    rclpy.init(args=['--ros-args', '-p', 'counts_per_mm_left:=11.23',
+                     '-p', 'counts_per_mm_right:=11.23', '-p', 'wheel_separation:=0.20686',
                      '-p', 'left_field:=0', '-p', 'right_field:=1'])
     try:
         node = encoder_odom.EncoderOdometry()
@@ -61,21 +60,82 @@ def test_dropped_digit_does_not_teleport_the_robot(monkeypatch):
 def test_robot40_v3_telemetry_skips_status_lines():
     # ms,mode,L,R,... ; "# CAL,0.000000,0.000000" must not be read as ticks.
     lines = [b'1768,8,-75,-70,80,80,412,428,338,12,70,130\r', b'# CAL,0.000000,0.000000\r']
-    assert latest_sample(lines, 2, 3) == (-75, -70)
+    assert latest_fields(lines, 4)[2:4] == [-75, -70]
 
 
 def test_drive_frame():
-    tpm = 5000.0  # ticks per metre
-    assert drive_frame(0.0, 0.0, 0.2, tpm, tpm, 900) == b'[V0,0]'
-    assert drive_frame(0.1, 0.0, 0.2, tpm, tpm, 900) == b'[V500,500]'
-    assert drive_frame(0.0, 1.0, 0.2, tpm, tpm, 900) == b'[V-500,500]'   # CCW: left back
-    assert drive_frame(0.5, 0.0, 0.2, tpm, tpm, 900) == b'[V900,900]'    # clamp
-    assert drive_frame(0.2, 2.0, 0.2, tpm, tpm, 900) == b'[V0,900]'      # curvature kept
-    # A larger right wheel needs fewer ticks for the same straight line.
-    assert drive_frame(0.1, 0.0, 0.2, tpm, tpm / 1.01, 900) == b'[V500,495]'
+    # BASE_NAV_V1: mm/s, rad/s. 한계(150 mm/s, 1.2 rad/s)를 넘으면 보드가 ABORT하므로 비율 유지 축소.
+    assert drive_frame(0.0, 0.0) == b'[V0,0.000]\n'
+    assert drive_frame(0.08, 0.3) == b'[V80,0.300]\n'
+    assert drive_frame(-0.08, -0.3) == b'[V-80,-0.300]\n'
+    assert drive_frame(0.3, 0.0) == b'[V150,0.000]\n'     # clamp
+    assert drive_frame(0.3, 1.2) == b'[V150,0.600]\n'     # curvature kept
+    assert drive_frame(0.0, 2.4) == b'[V0,1.200]\n'
+    assert b' ' not in drive_frame(-0.0001, -0.0001)       # 공백은 보드 정지 명령
 
 
-def test_separation_by_turn_direction():
-    assert separation(-0.01, 0.01, 0.1975, 0.2040) == 0.1975  # CCW (left turn)
-    assert separation(0.01, -0.01, 0.1975, 0.2040) == 0.2040  # CW (right turn)
-    assert separation(0.01, -0.01, 0.1975, -1.0) == 0.1975    # unset: symmetric
+class FakeSerial:
+    def __init__(self):
+        self.sent = b''
+
+    def write(self, data):
+        self.sent += data
+
+    def read(self, size):
+        return b''
+
+
+def test_arm_follows_board_and_counter_reset(monkeypatch):
+    # 무장은 시작 때 한 번만, ABORT 뒤 자동 재무장 없음, 재부팅이면 틱 기준점을 다시 잡음.
+    import rclpy
+
+    from cwu_base import encoder_odom
+    board = FakeSerial()
+    monkeypatch.setattr(encoder_odom.serial, 'Serial', lambda *a, **k: board)
+    rclpy.init(args=['--ros-args', '-p', 'counts_per_mm_left:=5.992624',
+                     '-p', 'counts_per_mm_right:=5.900948', '-p', 'wheel_separation:=0.1904',
+                     '-p', 'left_field:=2', '-p', 'right_field:=3', '-p', 'drive:=true'])
+    try:
+        node = encoder_odom.EncoderOdometry()
+        published = []  # 미션 노드가 받을 텔레메트리·이벤트
+        node.telemetry.publish = node.events.publish = published.append
+        assert board.sent == b'[N1]\n'
+        node.send_drive()
+        assert board.sent == b'[N1]\n'  # 보드가 살아 있는지 모르면 무장 요청 안 함
+        node.buffer += b'100,0,5000,5000,0,0,1,1,1,1,40,140\n'
+        node.poll()
+        node.send_drive()
+        node.send_drive()
+        assert board.sent.endswith(b'[ARM]\n') and board.sent.count(b'[ARM]') == 1
+        node.buffer += b'# ARMED\n'
+        node.poll()
+        assert list(published[0].data) == [100, 0, 5000, 5000, 0, 0, 1, 1, 1, 1, 40, 140]
+        assert published[1].data == '# ARMED'
+        reply = node.on_arm(None, encoder_odom.Trigger.Response())
+        assert reply.success and reply.message == '이미 무장됨.'
+        node.cmd, node.cmd_stamp = (0.08, 0.0), node.get_clock().now()
+        node.send_drive()
+        assert board.sent.endswith(b'[V80,0.000]\n')
+        node.buffer += b'# ABORT PSD_BLOCKED\n'
+        node.poll()
+        sent = board.sent
+        node.send_drive()
+        assert not node.armed and board.sent == sent  # 서비스 호출 전에는 아무것도 안 보냄
+        node.buffer += b'# ROBOT40_V4 READY\n150,0,0,0,0,0,1,1,1,1,40,140\n'
+        node.poll()
+        assert node.ticks is None and board.sent.endswith(b'[N1]\n')
+        node.buffer += b'200,0,10,10,0,0,1,1,1,1,40,140\n'
+        node.poll()
+        assert node.ticks == (10, 10)  # 재부팅 뒤 0 근처 틱이 새 기준 (속도 상한으로 버려지지 않음)
+        assert not node.on_arm(None, encoder_odom.Trigger.Response()).success
+        node.send_drive()
+        assert board.sent.endswith(b'[ARM]\n')
+        request = encoder_odom.SetBool.Request(data=True)
+        node.on_carry(request, encoder_odom.SetBool.Response())
+        assert board.sent.endswith(b'8[PF0]\n')  # 잡기 + 운반 모드
+        request.data = False
+        node.on_carry(request, encoder_odom.SetBool.Response())
+        assert board.sent.endswith(b'7[PF1]\n')
+        node.destroy_node()
+    finally:
+        rclpy.shutdown()

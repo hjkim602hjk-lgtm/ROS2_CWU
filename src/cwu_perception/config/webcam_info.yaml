@@ -1,0 +1,27 @@
+# 로봇 USB 웹캠 camera_info (camera_calibration_parsers 형식). webcam.yaml 의 camera_info_url이 읽습니다.
+# 2026-10-14 실측 (tools/field/webcam_fx.py 방식, 640x480):
+#   큐브를 로봇 정면 약 1.0 m → u0 = 297.5,  같은 거리에서 오른쪽 약 0.2 m → u1 = 387.3
+#   fx = (387.3 - 297.5) x 1.0 / 0.2 ≈ 450 (수평 화각 약 71°), fy = fx로 둠.
+#   cx = 297.5: 화면 중앙(320)이 아니라 "로봇 정면에 있는 큐브가 찍히는 열". 검출기의 방향 0이
+#   로봇(집게) 정면이 되어 카메라 좌우 틀어짐까지 보정됩니다. cy는 미측정(방향 정렬에 안 씀).
+#   렌즈 왜곡은 보정하지 않았습니다. 체커보드 보정을 하면 이 파일 전체를 그 결과로 바꿉니다.
+image_width: 640
+image_height: 480
+camera_name: webcam
+camera_matrix:
+  rows: 3
+  cols: 3
+  data: [450.0, 0.0, 297.5, 0.0, 450.0, 240.0, 0.0, 0.0, 1.0]
+distortion_model: plumb_bob
+distortion_coefficients:
+  rows: 1
+  cols: 5
+  data: [0.0, 0.0, 0.0, 0.0, 0.0]
+rectification_matrix:
+  rows: 3
+  cols: 3
+  data: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+projection_matrix:
+  rows: 3
+  cols: 4
+  data: [450.0, 0.0, 297.5, 0.0, 0.0, 450.0, 240.0, 0.0, 0.0, 0.0, 1.0, 0.0]

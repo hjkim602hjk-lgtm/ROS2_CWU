@@ -1,0 +1,70 @@
+# 미션 1 상태머신(cwu_nav/mission1.py) 설정입니다. 경기장 공개 전에 실측으로 확정하고,
+# 공개 후에는 고치지 않습니다(규정 2.3). 두 출발 칸 (1,9)·(9,1)에서 같은 값을 씁니다.
+
+mission1:
+  ros__parameters:
+    bearing_topic: /target/bearing
+    cmd_topic: /cmd_vel          # collision monitor 입력. 회전 탐색·접근·후퇴 때만 발행
+    rate_hz: 20.0
+
+    # 보드 PSD 정지 임계 (펌웨어 PSD_THRESHOLD, README_STM_PI_INTERFACE.md 9절). raw ADC
+    psd_threshold: 550
+    # 보드가 PSD로 멈췄을 때 "정면 때문"으로 볼 기준 (최근 1 s 정면 최대). 2026-10-14 실측: 집게 열림·앞 빔 ≤185,
+    # 큐브 앞 345~520, 잡기 좋은 위치 두 곳 중앙 514(550 이상 20%)·600(100%) — 둘 다 실제로 잘 잡힘(사용자 확인).
+    # 550을 그대로 쓰면 20 Hz 텔레메트리가 보드의 표본을 놓쳐 잡을 위치에서도 장애물로 오판(1·3회차).
+    grasp_front_min: 300
+    # 접근 마지막 구간: 중앙에 보고 들어왔고 정면 PSD가 이 값 이상이면 카메라 대신 직진 (4회차: 정면 240~370에서
+    # 큐브가 화면 아래로 잘려 방향 오차 ±11° 왕복). final_timeout_s 안에 보드 PSD 정지가 없으면 다시 탐색.
+    near_front_min: 250
+    final_timeout_s: 4.0
+
+    # 탐색. map 원점 = 출발 자세. (9,1)에서 x축을 등지고 +y로 놓으면(1,9는 점대칭) 중앙 (5,5)는
+    # 전방 4칸·좌측 4칸 = (1.6, 1.6) m. standoff만큼 앞에 멈춰 큐브를 밟지 않고 둘러봅니다.
+    search_hint: [1.6, 1.6]
+    hint_standoff: 0.6
+    spin_speed: 0.4              # rad/s, 제자리 한 바퀴 약 16 s
+    # 제자리 탐색은 라이다로 spin_open_dist보다 멀리 트인 방향(spin_min_gap_deg 이상 폭)만 카메라가 지나가게 돎.
+    # 벽(200 mm)은 큐브(50 mm)를 가리므로 벽 쪽은 볼 필요 없음. 트인 곳이 없으면 돌지 않음 (2026-10-15).
+    spin_open_dist: 0.6
+    camera_half_fov_deg: 30.0    # 웹캠 수평 화각 ±35°, 좌우 끝에 잘린 덩어리는 버리므로 30°
+    spin_min_gap_deg: 5
+
+    # 접근 시각 서보 (servo.yaml과 같은 식). 정렬 전에는 전진하지 않음
+    k_yaw: 1.2
+    max_yaw: 0.8
+    min_yaw: 0.0
+    align_tol_rad: 0.09          # 약 5도
+    approach_speed: 0.06         # m/s. 보드 PSD 정지 전 제동거리를 줄이려고 낮게
+    sample_timeout_s: 0.5
+    confirm_count: 3             # 이만큼 검출이 confirm_window_s 안에 와야 목표물로 인정
+    confirm_window_s: 1.0
+    blind_forward_s: 1.0         # 정렬된 채 화면 아래로 빠진 뒤 계속 직진하는 시간 (실측)
+    grasp_target_age_s: 2.0      # PSD 정지 때 이 안에 중앙에 보였어야 파지
+
+    # 파지 (펌웨어 8 = 잡기 99/78). 105/75는 잡히지만 오른쪽 서보가 혼자 열렸다 닫혀 3°씩 완화 (2026-10-14),
+    # 102에서 왼쪽이 또 말썽이라 왼쪽만 3° 더 완화 (2026-10-15)
+    grip_angles: [99, 78]
+    open_angles: [40, 140]       # 펌웨어 7/c = 열기. 이 각도에 도달해야 주행·파지 판정 시작
+    grip_timeout_s: 4.0          # 서보 1도/30 ms, 40→99는 약 1.8 s
+    arm_timeout_s: 2.0
+
+    # PSD 정지 뒤 막힌 쪽 반대로 직진해 빠지기
+    backoff_speed: 0.05
+    backoff_s: 1.5               # 7.5 cm
+
+    # 운반 중 정면 PSD가 이 값 아래로 hold_lost_s 이상이면 놓친 것. 0이면 검사 안 함.
+    # 2026-10-14 실측: 큐브 문 상태 median 615(min 568), 큐브 없이 닫힘 579 → 닫힌 집게 날이 PSD를
+    # 가려 구별 불가. 정면 PSD로는 놓침을 판단할 수 없어 끔. (큐브가 열린 날 사이에 오면 585 → 파지 판단은 됨)
+    hold_min_raw: 0
+    hold_lost_s: 1.0
+    retry_wait_s: 2.0
+
+    # 미탐색 경계 선택
+    frontier_clearance: 0.22     # m, 벽과 이만큼 떨어진 칸만 (로봇 반경 0.165 + 여유)
+    frontier_min_cells: 8        # 이보다 작은 경계 묶음은 잡음
+    frontier_min_dist: 0.5
+    blacklist_radius: 0.4
+
+    # 이 시간 안에 보드 정지가 이만큼 넘으면 멈춤 (부딪힘 반복 방지)
+    max_aborts: 8
+    abort_window_s: 60.0

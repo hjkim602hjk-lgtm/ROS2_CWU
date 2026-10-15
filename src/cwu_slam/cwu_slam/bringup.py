@@ -91,7 +91,7 @@ def generate_bringup(demo=False, backend=None):
             DeclareLaunchArgument('start_encoder', default_value='true'),
             # Nucleo UART (Pi GPIO 14/15)
             DeclareLaunchArgument('encoder_port', default_value='/dev/ttyAMA0'),
-            # true면 encoder_odom이 /cmd_vel로 모터를 움직입니다 (ROBOT40_V3)
+            # true면 encoder_odom이 /cmd_vel로 모터를 움직입니다 (BASE_NAV_V1)
             DeclareLaunchArgument('drive', default_value='false'),
             # Nav2와 함께면 cmd_vel_safe: 모든 주행 명령이 collision monitor를 거칩니다
             DeclareLaunchArgument('cmd_vel_topic', default_value='cmd_vel'),

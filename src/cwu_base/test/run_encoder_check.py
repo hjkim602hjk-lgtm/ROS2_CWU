@@ -15,6 +15,7 @@ from pathlib import Path
 import yaml
 
 RADIUS, SEPARATION, TICKS_PER_REV = 0.0325, 0.2, 1000.0
+COUNTS_PER_MM = TICKS_PER_REV / (2 * math.pi * RADIUS * 1000)
 DISTANCE = 1.0  # 1 m 직진을 흉내 냅니다.
 
 
@@ -23,8 +24,8 @@ def write_config(directory):
     path = directory / 'encoder.yaml'
     path.write_text(yaml.safe_dump({'encoder_odom': {'ros__parameters': {
         'baud': 115200, 'left_field': 0, 'right_field': 1,
-        'wheel_radius': RADIUS, 'wheel_separation': SEPARATION,
-        'ticks_per_rev': TICKS_PER_REV, 'counter_bits': 16,
+        'counts_per_mm_left': COUNTS_PER_MM, 'counts_per_mm_right': COUNTS_PER_MM,
+        'wheel_separation': SEPARATION, 'counter_bits': 16,
     }}}))
     return path
 

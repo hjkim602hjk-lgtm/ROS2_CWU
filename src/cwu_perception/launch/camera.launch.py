@@ -1,15 +1,16 @@
-# D415 드라이버, 카메라 장착 TF, 빨간 목표물 검출기를 함께 띄우는 진입점입니다.
+# 컬러 카메라 드라이버(웹캠 또는 D415), 카메라 장착 TF, 빨간 목표물 검출기를 함께 띄우는 진입점입니다.
 # 장착값은 cwu_slam의 mount.yaml을 그대로 공유해 TF 트리 정의를 한 곳에 둡니다.
 # start_camera:=false로 드라이버를 빼면 bag 재생이나 정지 이미지 시험에 쓸 수 있습니다.
 #
 # [공부 노트] 이 파일이 띄우는 것
 #   ① static TF base_link → camera_link   (mount.yaml 의 camera_mount)
-#   ② realsense2_camera_node              → /camera/camera/color/image_raw, camera_info (realsense.yaml)
+#   ② driver:=webcam(기본)    usb_cam            → /webcam/image_raw, camera_info (webcam.yaml)
+#      driver:=realsense      realsense2_camera  → /camera/camera/color/image_raw, camera_info
 #   ③ target_detector                     → /target/bearing (target.yaml)
 #   실행 예: ros2 launch cwu_perception camera.launch.py
 #           ros2 launch cwu_perception camera.launch.py start_camera:=false   # 녹화 재생 시험
 
-"""RealSense D415 bringup plus the red target detector."""
+"""Colour camera (USB webcam or RealSense) bringup plus the red target detector."""
 from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
@@ -42,8 +43,16 @@ def generate_launch_description():
             result.append(static_tf_node(
                 'camera_mount', 'camera_link', mount, use_sim_time))
 
-        # ② RealSense 드라이버
-        if IfCondition(LaunchConfiguration('start_camera')).evaluate(context):
+        # ② 카메라 드라이버. 2026-10-14 사용자 결정: 로봇 카메라는 USB 웹캠(Microdia, 640x480 MJPEG)
+        webcam = LaunchConfiguration('driver').perform(context) == 'webcam'
+        topics = ({'color_topic': '/webcam/image_raw', 'camera_info_topic': '/webcam/camera_info'}
+                  if webcam else {})
+        if webcam and IfCondition(LaunchConfiguration('start_camera')).evaluate(context):
+            result.append(Node(
+                package='usb_cam', executable='usb_cam_node_exe', namespace='webcam', name='usb_cam',
+                parameters=[str(share / 'webcam.yaml'), {'use_sim_time': use_sim_time}],
+                output='screen'))
+        elif IfCondition(LaunchConfiguration('start_camera')).evaluate(context):
             # 드라이버와 같은 이유로 요청받을 때만 해석합니다. RealSense는 선택 설치입니다.
             get_package_share_directory('realsense2_camera')
             result.append(Node(
@@ -61,10 +70,11 @@ def generate_launch_description():
                 package='cwu_perception', executable='target_detector',
                 name='target_detector',
                 parameters=[LaunchConfiguration('target_params_file'),
-                            {'use_sim_time': use_sim_time}], output='screen'))
+                            dict(topics, use_sim_time=use_sim_time)], output='screen'))
         return result
 
     return LaunchDescription([
+        DeclareLaunchArgument('driver', default_value='webcam', choices=['webcam', 'realsense']),
         DeclareLaunchArgument('camera_params_file',
                               default_value=str(share / 'realsense.yaml')),
         DeclareLaunchArgument('target_params_file',

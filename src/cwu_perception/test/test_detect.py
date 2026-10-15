@@ -51,6 +51,18 @@ def test_long_thin_red_streak_is_rejected():
     assert find(scene(box=(20, 30, 60, 6))) is None
 
 
+def test_region_cut_by_side_edge_is_rejected():
+    # 긴 빨간 물체가 화면 왼쪽 끝에 걸리면 잘린 부분이 정사각형처럼 보입니다 (모의 경기장 3회차).
+    assert find(scene(box=(0, 30, 20, 20))) is None
+    assert find(scene(box=(140, 30, 20, 20))) is None
+    assert find(scene(box=(1, 30, 20, 20))) is not None
+
+
+def test_region_cut_by_bottom_edge_is_kept():
+    # 마지막 접근에서 큐브는 화면 아래로 빠집니다. 아래쪽에 걸린 것은 계속 봅니다.
+    assert find(scene(box=(70, 100, 20, 20))) is not None
+
+
 def test_largest_of_two_red_regions_wins():
     image = scene(box=(10, 10, 12, 12))
     image[60:90, 100:130] = (0, 0, 255)

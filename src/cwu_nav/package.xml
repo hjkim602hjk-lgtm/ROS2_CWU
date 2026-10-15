@@ -20,6 +20,16 @@
   <exec_depend>nav2_collision_monitor</exec_depend>
   <exec_depend>nav2_msgs</exec_depend>
   <exec_depend>nav2_lifecycle_manager</exec_depend>
+  <!-- mission1: 상태머신 -->
+  <exec_depend>action_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>cwu_perception</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
   <!-- Nav2 본체는 용량이 커서 선택 설치합니다. 설치 명령은 README 4장을 따릅니다.
        sudo apt install ros-humble-navigation2 ros-humble-nav2-bringup
                         ros-humble-nav2-regulated-pure-pursuit-controller -->
