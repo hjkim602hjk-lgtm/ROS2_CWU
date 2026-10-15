@@ -7,8 +7,8 @@ import math
 
 import numpy as np
 
-from cwu_nav.mission_logic import (backoff_direction, frontier_goal, hint_goal, is_grasp, side_block,
-                                   spin_plan)
+from cwu_nav.mission_logic import (backoff_direction, clear_turn, dead_end, frontier_goal, hint_goal, is_grasp,
+                                   side_block, spin_plan)
 
 RES = 0.05
 
@@ -77,16 +77,67 @@ def scan_of(points):
 def test_side_block_sees_an_obstacle_beside_the_front_half_only():
     def block(points):
         ranges, a0, inc = scan_of(points)
-        return side_block(ranges, a0, inc, 0.0, reach=0.165, half_width=0.18)
-    beside_left = [(x, 0.17) for x in (0.02, 0.05, 0.08, 0.11)]
+        return side_block(ranges, a0, inc, 0.0, reach=0.165, half_width=0.165)
+    beside_left = [(x, 0.155) for x in (0.02, 0.05, 0.08, 0.11)]  # inside the body width: straight ahead hits it
     assert block(beside_left) == 1
     assert block([(x, -y) for x, y in beside_left]) == -1
+    # wall running alongside, 0.17~0.21 m (5 mm~4.5 cm off the body, 14회차): passes by, never pushed
+    assert block([(x / 100, 0.17 + x / 400) for x in range(0, 17)]) == 0
     # 400 mm corridor, robot centred: walls 0.20 m to each side → clear
     assert block([(x, s * 0.20) for x in (0.0, 0.05, 0.1, 0.15) for s in (1, -1)]) == 0
     # wall straight ahead (front PSD / collision monitor job) and points behind → clear
     assert block([(0.30, y) for y in (-0.05, 0.0, 0.05)] + [(-0.1, 0.17), (-0.05, 0.17), (-0.12, 0.16)]) == 0
     # one or two noise points do not stop the approach
-    assert block([(0.05, 0.17), (0.08, 0.17)]) == 0
+    assert block([(0.05, 0.155), (0.08, 0.155)]) == 0
+
+
+def test_clear_turn_steers_away_from_a_converging_wall():
+    guard = dict(reach=0.165, half_width=0.165, max_deg=25)
+    # 15회차: right wall closing in ahead (0.20 m beside the body, 0.15 m at x = 0.15)
+    wall = [(x / 100, -(0.20 - x / 300)) for x in range(-10, 31)]
+    ranges, a0, inc = scan_of(wall)
+    assert side_block(ranges, a0, inc, 0.0, 0.165, 0.165) == -1
+    turn = clear_turn(ranges, a0, inc, 0.0, side=-1, **guard)
+    assert turn is not None and 0 < turn <= math.radians(25)          # turn left, away from it
+    assert not side_block(ranges, a0, inc, -turn, 0.165, 0.165)
+    # mirrored: wall on the left → turn right
+    ranges, a0, inc = scan_of([(x, -y) for x, y in wall])
+    assert clear_turn(ranges, a0, inc, 0.0, side=1, **guard) < 0
+    # boxed in on both sides inside the body width → no way past, back off instead
+    ranges, a0, inc = scan_of([(x / 100, s * 0.15) for x in range(-5, 20) for s in (1, -1)])
+    assert clear_turn(ranges, a0, inc, 0.0, side=1, **guard) is None
+
+
+def box_scan(front, left, right, back=math.inf):
+    """360 one-degree rays (laser yaw 0) hitting flat walls at these distances; inf = open."""
+    ranges = []
+    for d in range(360):
+        a = math.radians(d)
+        c, s = math.cos(a), math.sin(a)
+        hits = [w / v for w, v in ((front, c), (back, -c), (left, s), (right, -s)) if v > 1e-9]
+        ranges.append(min(hits))
+    return ranges, 0.0, math.radians(1.0)
+
+
+def test_dead_end_needs_walls_ahead_left_and_right_and_the_way_back_open():
+    limits = dict(front_max=0.35, side_max=0.35, back_min=0.5)
+
+    def de(front, left, right, back=math.inf):
+        ranges, a0, inc = box_scan(front, left, right, back)
+        return dead_end(ranges, a0, inc, 0.0, **limits)
+    assert de(0.2, 0.2, 0.2)                 # last cell of a 400 mm dead-end corridor
+    assert de(0.2, 0.2, 0.2, back=0.6)       # one-cell pocket off a corridor
+    assert not de(0.6, 0.2, 0.2)             # corridor whose end is still a cell away (may turn there)
+    assert not de(0.2, 0.2, math.inf)        # L-turn: open to the right
+    assert not de(0.2, math.inf, math.inf)   # T-junction
+    assert not de(math.inf, 0.2, 0.2)        # straight corridor
+    assert not de(0.2, 0.2, 0.2, back=0.2)   # closed box: nowhere to turn back to
+    # turned around in the dead end, facing the exit: the end wall is now behind → not again
+    assert not de(math.inf, 0.2, 0.2, back=0.2)
+    # laser mounted backwards (yaw pi): same dead end seen through the offset
+    ranges, a0, inc = box_scan(0.2, 0.2, 0.2)
+    flipped = ranges[180:] + ranges[:180]
+    assert dead_end(flipped, a0, inc, math.pi, **limits)
 
 
 def test_single_cell_noise_is_not_a_frontier():

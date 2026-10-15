@@ -1,6 +1,7 @@
 # 로봇 없이 mission1 상태머신의 전체 흐름을 검증하는 스크립트입니다.
 # 가짜 보드(텔레메트리·이벤트·arm/carry 서비스), 가짜 Nav2(바로 성공하는 액션 서버),
-# 고정 TF를 붙이고 탐색 → 측면 PSD 후퇴 → 접근 → 몸통 옆 장애물(라이다) 후퇴 → 재접근 → 정면 PSD 파지
+# 고정 TF를 붙이고 탐색 → 막다른 곳(라이다) 되돌기 → 측면 PSD 후퇴 → 접근 → 몸통 옆 장애물(라이다) 후퇴
+# (비켜 가기 회전, 고정 TF라 못 돌면 후퇴) → 재접근 → 정면 PSD 파지
 # → 출발점 복귀 → 종료를 확인합니다.
 # 순수 판단은 test_mission_logic.py가 보고, 여기서는 상태 전이와 토픽·서비스·액션 연결을 봅니다.
 
@@ -19,6 +20,7 @@ from geometry_msgs.msg import PointStamped, TransformStamped, Twist
 from nav2_msgs.action import NavigateToPose
 from rclpy.action import ActionServer
 from rclpy.node import Node
+from rclpy.task import Future
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Int32MultiArray, String
 from std_srvs.srv import SetBool, Trigger
@@ -31,7 +33,7 @@ class FakeRobot(Node):
         self.psd = [0, 0, 0, 0]          # 앞, 뒤, 좌, 우 raw
         self.servo = [105, 75]           # 지난 실행이 닫힌 채 끝남 (실물 2회차)
         self.carries, self.goals, self.cmd = [], [], None
-        self.open_at = self.first_cmd_servo = self.scan_points = None
+        self.open_at = self.first_cmd_servo = self.scan_points = self.hold = None
         transform = TransformStamped()
         transform.header.frame_id, transform.child_frame_id = 'map', 'base_link'
         transform.transform.rotation.w = 1.0
@@ -78,9 +80,13 @@ class FakeRobot(Node):
         response.success = True
         return response
 
-    def on_goal(self, handle):
+    async def on_goal(self, handle):
         p = handle.request.pose.pose.position
         self.goals.append((round(p.x, 3), round(p.y, 3)))
+        if self.hold is not None and len(self.goals) >= 2:
+            await self.hold  # 끝나지 않고 진행 중인 목표 (막다른 곳 검사)
+            handle.abort()
+            return NavigateToPose.Result()
         if len(self.goals) == 1:
             handle.abort()  # 첫 목표: 장애물 모서리에 붙어 RPP가 거부 (모의 경기장 1·4회차)
         else:
@@ -111,7 +117,15 @@ def verify():
         print('PASS: 첫 주행 명령은 집게가 다 열린 뒤', flush=True)
         robot.wait('GOTO: 첫 목표 = 중앙 힌트 앞 (1.176, 1.176)',
                    lambda: robot.goals[:1] == [(1.176, 1.176)], 15)
+        robot.hold = Future()
         robot.wait('Nav2 실패 → 다음 목표', lambda: len(robot.goals) >= 2, 20)
+        # 탐색 중 앞·좌·우 0.2 m 벽, 뒤는 트임: 목표를 버리고 돌아서 다른 목표
+        wall = [k / 200 for k in range(-40, 41)]  # 5 mm 간격: 1도 광선마다 벽이 찍히게
+        robot.scan_points = [(0.2, y) for y in wall] + [(x, s * 0.2) for x in wall for s in (1, -1)]
+        robot.wait('GOTO 중 막다른 곳 → 그 목표를 버리고 돌아서 다음 목표', lambda: len(robot.goals) >= 3, 20)
+        robot.scan_points = []
+        robot.hold.set_result(True)
+        robot.hold = None
         robot.wait('도착 뒤 다시 SPIN', lambda: robot.cmd and robot.cmd[1] != 0, 5)
 
         robot.psd[3] = 600  # 오른쪽 벽: 보드가 회전 중 멈춤
@@ -123,8 +137,10 @@ def verify():
         robot.wait('APPROACH: 중앙에 보이면 직진',
                    lambda: robot.cmd and robot.cmd[0] > 0 and robot.cmd[1] == 0, 5, see=True)
         # 몸통 왼쪽 앞 옆에 장애물: 큐브를 보고 있어도 밀지 않고 뒤로 뺌 (실물 11회차)
-        robot.scan_points = [(x, 0.17) for x in (0.02, 0.05, 0.08, 0.11)]
-        robot.wait('APPROACH: 몸통 옆 장애물(라이다) → 직진 멈추고 후진',
+        robot.scan_points = [(x, 0.155) for x in (0.02, 0.05, 0.08, 0.11)]
+        robot.wait('APPROACH: 몸통 왼쪽 옆 장애물(라이다) → 직진 멈추고 오른쪽으로 비켜 가기 회전',
+                   lambda: robot.cmd and robot.cmd[0] == 0 and robot.cmd[1] < 0, 5, see=True)
+        robot.wait('고정 TF라 회전이 안 되면 비켜 가기 포기 → 후진',
                    lambda: robot.cmd and robot.cmd[0] < 0, 5, see=True)
         robot.scan_points = []
         robot.wait('장애물 사라진 뒤 다시 접근 직진',

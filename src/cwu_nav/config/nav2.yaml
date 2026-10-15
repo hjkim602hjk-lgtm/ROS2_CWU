@@ -168,7 +168,9 @@ planner_server:
     GridBased:
       plugin: nav2_navfn_planner/NavfnPlanner
       tolerance: 0.15
-      use_astar: true
+      # 다익스트라 (2026-10-16 16회차): A*는 길이 있는데도 복귀 계획을 157번 실패(지도 446×56칸, 대부분 미탐색,
+      # 꼬불꼬불한 길 — NavFn A*는 반복 횟수 상한에 걸림). 실행 중 false로 바꾸자 즉시 경로가 나와 44 s 만에 복귀.
+      use_astar: false
       # 미탐색 영역을 지나는 경로를 허용해야 프론티어 탐색이 가능합니다.
       allow_unknown: true
 

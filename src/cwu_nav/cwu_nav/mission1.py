@@ -27,8 +27,8 @@ from std_srvs.srv import SetBool, Trigger
 from tf2_ros import Buffer, TransformException, TransformListener
 
 from cwu_nav.go_home import home_goal
-from cwu_nav.mission_logic import (FRONT, SERVO_L, SERVO_R, backoff_direction, frontier_goal,
-                                   hint_goal, is_grasp, side_block, spin_plan, wrap)
+from cwu_nav.mission_logic import (FRONT, SERVO_L, SERVO_R, backoff_direction, clear_turn, dead_end,
+                                   frontier_goal, hint_goal, is_grasp, side_block, spin_plan, wrap)
 from cwu_nav.servo import follow, yaw_error
 
 # 보드 정지(ABORT 등)를 받으면 BACKOFF로 처리하는 상태
@@ -49,14 +49,15 @@ class Mission(Node):
             'search_hint': [1.6, 1.6], 'hint_standoff': 0.6, 'spin_speed': 0.4,
             'spin_open_dist': 0.6, 'camera_half_fov_deg': 30.0, 'spin_min_gap_deg': 5,
             'k_yaw': 1.2, 'max_yaw': 0.8, 'min_yaw': 0.0,
-            'align_tol_rad': 0.09, 'approach_speed': 0.06, 'side_guard_reach': 0.165, 'side_guard_width': 0.18,
+            'align_tol_rad': 0.09, 'approach_speed': 0.06, 'side_guard_reach': 0.165, 'side_guard_width': 0.165,
+            'detour_max_deg': 25, 'detour_s': 2.0, 'max_detours': 6,
             'sample_timeout_s': 0.5, 'confirm_count': 3, 'confirm_window_s': 1.0,
             'blind_forward_s': 1.0, 'grasp_target_age_s': 2.0,
             'grip_angles': [99, 78], 'open_angles': [40, 140], 'grip_timeout_s': 4.0,
             'arm_timeout_s': 2.0, 'backoff_speed': 0.05, 'backoff_s': 1.5,
             'hold_min_raw': 550, 'hold_lost_s': 1.0, 'retry_wait_s': 2.0,
             'frontier_clearance': 0.15, 'frontier_min_cells': 8, 'frontier_min_dist': 0.5,
-            'frontier_passage': 0.075,
+            'frontier_passage': 0.075, 'dead_end_front': 0.35, 'dead_end_side': 0.35, 'dead_end_back': 0.5,
             'blacklist_radius': 0.4, 'max_aborts': 8, 'abort_window_s': 60.0,
         }
         self.declare_parameters('', list(defaults.items()))
@@ -82,6 +83,7 @@ class Mission(Node):
         self.armed, self.arm_at, self.aborts = False, -math.inf, []
         self.goal_id, self.goal, self.hint_done, self.blacklist = 0, None, False, []
         self.released = self.holding = self.side_hit = False
+        self.detour, self.detours = None, 0  # 접근 중 비켜 가기 (목표 방향, 회전 제한 시각, 직진 끝 시각)
         self.resume = 'SPIN'
         self.state, self.since, self.start = 'INIT', self.now(), self.now()
         self.create_timer(1.0 / self.p['rate_hz'], self.tick)
@@ -311,8 +313,42 @@ class Mission(Node):
         if not side:
             return self.drive(linear, angular)
         self.drive()
+        # 비켜 가기: 막힌 쪽 반대로 감시 영역이 빌 만큼만 돌고 짧게 직진한 뒤 다시 조준 (15회차).
+        # PSD 직진(큐브 바로 앞)에서는 틀면 파지를 놓치므로 후퇴합니다.
+        pose, sides = self.pose(), 'LEFT' if side > 0 else 'RIGHT'
+        turn = None
+        if self.final_since is None and pose is not None and self.detours < p['max_detours']:
+            turn = clear_turn(self.scan.ranges, self.scan.angle_min, self.scan.angle_increment, yaw,
+                              p['side_guard_reach'], p['side_guard_width'], side, p['detour_max_deg'])
+        if turn is not None:
+            self.detours += 1
+            limit = 2 * abs(turn) / p['spin_speed'] + 1.0
+            self.detour = (pose[2] + turn, self.now() + limit, None)
+            self.get_logger().info(f'{"왼" if side > 0 else "오른"}쪽 옆 장애물: {math.degrees(turn):+.0f}° 틀어 '
+                                   f'비켜 갑니다 ({self.detours}/{p["max_detours"]})')
+            return
         self.side_hit = True  # 보드 정지처럼 처리하되 측면 PSD 값과 상관없이 뒤로 뺌
-        self.on_stop(f'# ABORT SIDE_LIDAR {"LEFT" if side > 0 else "RIGHT"}')
+        self.on_stop(f'# ABORT SIDE_LIDAR {sides}')
+
+    def do_detour(self):
+        """Turn in place to the clear heading, then a short straight run; then aim at the cube again."""
+        p, pose = self.p, self.pose()
+        target, turn_until, go_until = self.detour
+        if go_until is None:
+            err = wrap(target - pose[2]) if pose is not None else 0.0
+            if abs(err) > math.radians(3):
+                if self.now() > turn_until:  # 못 돌고 있음: 비켜 가기 포기하고 후퇴
+                    self.detour = None
+                    self.drive()
+                    self.side_hit = True
+                    return self.on_stop('# ABORT SIDE_LIDAR TURN')
+                return self.drive(angular=math.copysign(p['spin_speed'], err))
+            self.detour = (target, turn_until, self.now() + p['detour_s'])
+            return self.drive()
+        if self.now() > go_until:
+            self.detour = None
+            return self.drive()
+        return self.approach_drive(p['approach_speed'])  # 직진 중에도 측면 감시, 또 막히면 다시 비켜 감
 
     def do_spin(self):
         p = self.p
@@ -366,7 +402,14 @@ class Mission(Node):
             return self.enter('SPIN')
         if self.goal_result == 'fail':
             self.blacklist.append(self.goal[:2])
-            self.next_goal()
+            return self.next_goal()
+        yaw, p = self.laser_yaw(), self.p
+        if yaw is not None and dead_end(self.scan.ranges, self.scan.angle_min, self.scan.angle_increment, yaw,
+                                        p['dead_end_front'], p['dead_end_side'], p['dead_end_back']):
+            # 탐색 중에만: 큐브 접근·복귀는 막다른 곳 안으로도 가야 합니다. 돌면서 카메라로도 둘러봄
+            self.get_logger().info('막다른 곳(앞·좌·우 벽): 되돌아 나가 다른 길을 찾습니다.')
+            self.blacklist.append(self.goal[:2])
+            self.enter('SPIN')
 
     def target_centred(self):
         recent = self.seen(self.p['grasp_target_age_s'])
@@ -374,10 +417,13 @@ class Mission(Node):
 
     def start_approach(self):
         self.cancel()
-        self.final_since = None
+        self.final_since = self.detour = None
+        self.detours = 0
 
     def do_approach(self):
         p, t = self.p, self.telemetry
+        if self.detour is not None:
+            return self.do_detour()
         # 마지막 구간: 큐브가 화면 아래로 잘려 들어가면 검출 중심이 좌우로 흔들려(±11°, 4회차) 제자리
         # 회전을 반복합니다. 중앙에 보고 들어왔고 집게의 정면 PSD가 가까움을 보면 카메라 대신 직진하고
         # 보드의 PSD 정지(550, 60 ms)를 기다립니다. 집게 열림·앞 빔이면 정면은 185 이하입니다.

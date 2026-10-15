@@ -1,31 +1,20 @@
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
-    <RecoveryNode number_of_retries="6" name="NavigateRecovery">
-      <PipelineSequence name="NavigateWithReplanning">
-        <RateController hz="0.333">
-          <RecoveryNode number_of_retries="1" name="ComputePathThroughPoses">
-            <ReactiveSequence>
-              <RemovePassedGoals input_goals="{goals}" output_goals="{goals}" radius="0.7" />
-              <ComputePathThroughPoses goals="{goals}" path="{path}" planner_id="GridBased" />
-            </ReactiveSequence>
-            <!-- 계획 실패 시 전역 비용지도를 지우지 않음: 정적 레이어가 없어 지우면 본 벽을 잊고 같은 막힌 길로 다시 감 (2026-10-15) -->
-            <Wait wait_duration="1" />
-          </RecoveryNode>
-        </RateController>
-        <RecoveryNode number_of_retries="1" name="FollowPath">
-          <FollowPath path="{path}" controller_id="FollowPath" />
-          <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap" />
-        </RecoveryNode>
-      </PipelineSequence>
-      <ReactiveFallback name="RecoveryFallback">
-        <GoalUpdated />
-        <RoundRobin name="RecoveryActions">
-          <Sequence name="ClearingActions">
-            <ClearEntireCostmap name="ClearLocalCostmap-Subtree" service_name="local_costmap/clear_entirely_local_costmap" />
-          </Sequence>
-          <Wait wait_duration="5" />
-        </RoundRobin>
-      </ReactiveFallback>
-    </RecoveryNode>
+    <!-- 경로 재시도 없음 (2026-10-16 사용자 결정): 계획이 실패하면 기다리거나 다시 계획하지 않고 바로 실패 →
+         미션이 다른 목표로 넘어갑니다. 전역 비용지도가 SLAM 지도라 기다려도 거의 안 바뀜 (13회차 22 s 제자리 대기).
+         계획 실패 시 전역 비용지도도 지우지 않음: 지우면 본 벽을 잊고 같은 막힌 길로 다시 감 (2026-10-15).
+         경로 따라가기 실패만 로컬 비용지도를 지우고 한 번 더 따라감 (기다림 없음). -->
+    <PipelineSequence name="NavigateWithReplanning">
+      <RateController hz="0.333">
+        <ReactiveSequence>
+          <RemovePassedGoals input_goals="{goals}" output_goals="{goals}" radius="0.7" />
+          <ComputePathThroughPoses goals="{goals}" path="{path}" planner_id="GridBased" />
+        </ReactiveSequence>
+      </RateController>
+      <RecoveryNode number_of_retries="1" name="FollowPath">
+        <FollowPath path="{path}" controller_id="FollowPath" />
+        <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap" />
+      </RecoveryNode>
+    </PipelineSequence>
   </BehaviorTree>
 </root>

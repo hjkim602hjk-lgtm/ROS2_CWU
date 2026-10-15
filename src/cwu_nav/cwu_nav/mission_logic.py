@@ -114,6 +114,43 @@ def side_block(ranges, angle_min, angle_inc, yaw_offset, reach, half_width, min_
     return 1 if side >= 0 else -1
 
 
+def clear_turn(ranges, angle_min, angle_inc, yaw_offset, reach, half_width, side, max_deg, step_deg=5):
+    """Smallest in-place turn (rad) away from the blocked `side` after which side_block is clear, else None.
+
+    큐브로 가는 직선이 옆 벽·모서리를 스칠 때 비켜 가기 (2026-10-16 15회차: 통로에 15° 비스듬히 들어가
+    같은 직선으로 9번 재접근하다 미션 중단). 막힌 쪽(+1 왼쪽)의 반대로 돌며, 카메라 화각 안에 큐브가
+    남도록 max_deg까지만 찾습니다. 원형 몸체라 제자리 회전은 새로 닿는 곳이 없습니다.
+    """
+    for deg in range(step_deg, int(max_deg) + 1, step_deg):
+        turn = -side * math.radians(deg)
+        # 로봇이 turn만큼 돌면 같은 점이 -turn만큼 돌아 보입니다
+        if not side_block(ranges, angle_min, angle_inc, yaw_offset - turn, reach, half_width):
+            return turn
+    return None
+
+
+def dead_end(ranges, angle_min, angle_inc, yaw_offset, front_max, side_max, back_min):
+    """True when the robot has driven into a dead end: walls ahead, left and right, open behind.
+
+    2026-10-16 사용자 요청: 세 면이 벽인 곳에 들어오면 바로 되돌아 나가 다른 길을 찾습니다.
+    각 방향(앞 ±20°, 좌 60~120°, 우 −120~−60°, 뒤 160~200°) 광선의 중앙값으로 판단, 무효(0.0·inf)는 먼 곳.
+    앞 기준을 막다른 칸 하나 안(0.35 m)으로 두어 끝 칸 옆으로 꺾이는 통로를 오판하지 않고,
+    뒤가 트여 있어야(들어온 길) 해서 돌아서 출구를 보는 중에는 다시 걸리지 않습니다.
+    """
+    sectors = {'front': [], 'left': [], 'right': [], 'back': []}
+    for i, r in enumerate(ranges):
+        a = math.degrees(wrap(angle_min + i * angle_inc + yaw_offset))
+        name = ('front' if abs(a) <= 20 else 'left' if 60 <= a <= 120
+                else 'right' if -120 <= a <= -60 else 'back' if abs(a) >= 160 else None)
+        if name:
+            sectors[name].append(r if math.isfinite(r) and r > 0.0 else math.inf)
+    if not all(sectors.values()):
+        return False
+    near = {name: float(np.median(rays)) for name, rays in sectors.items()}
+    return (near['front'] < front_max and near['left'] < side_max and near['right'] < side_max
+            and near['back'] > back_min)
+
+
 def spin_plan(ranges, angle_min, angle_inc, yaw_offset, open_dist, half_fov_deg, min_gap_deg):
     """Rotation (ccw, cw) in degrees that sweeps the camera over every open direction.
 
