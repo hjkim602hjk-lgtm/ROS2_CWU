@@ -1,9 +1,11 @@
 # 로봇 없이 mission1 상태머신의 전체 흐름을 검증하는 스크립트입니다.
 # 가짜 보드(텔레메트리·이벤트·arm/carry 서비스), 가짜 Nav2(바로 성공하는 액션 서버),
-# 고정 TF를 붙이고 탐색 → 측면 PSD 후퇴 → 접근 → 정면 PSD 파지 → 출발점 복귀 → 종료를 확인합니다.
+# 고정 TF를 붙이고 탐색 → 측면 PSD 후퇴 → 접근 → 몸통 옆 장애물(라이다) 후퇴 → 재접근 → 정면 PSD 파지
+# → 출발점 복귀 → 종료를 확인합니다.
 # 순수 판단은 test_mission_logic.py가 보고, 여기서는 상태 전이와 토픽·서비스·액션 연결을 봅니다.
 
 """Drive the mission1 node through a full fake mission and check each hand-off."""
+import math
 import os
 from pathlib import Path
 import signal
@@ -17,6 +19,7 @@ from geometry_msgs.msg import PointStamped, TransformStamped, Twist
 from nav2_msgs.action import NavigateToPose
 from rclpy.action import ActionServer
 from rclpy.node import Node
+from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Int32MultiArray, String
 from std_srvs.srv import SetBool, Trigger
 from tf2_ros import StaticTransformBroadcaster
@@ -28,7 +31,7 @@ class FakeRobot(Node):
         self.psd = [0, 0, 0, 0]          # 앞, 뒤, 좌, 우 raw
         self.servo = [105, 75]           # 지난 실행이 닫힌 채 끝남 (실물 2회차)
         self.carries, self.goals, self.cmd = [], [], None
-        self.open_at = self.first_cmd_servo = None
+        self.open_at = self.first_cmd_servo = self.scan_points = None
         transform = TransformStamped()
         transform.header.frame_id, transform.child_frame_id = 'map', 'base_link'
         transform.transform.rotation.w = 1.0
@@ -37,6 +40,7 @@ class FakeRobot(Node):
         self.telemetry = self.create_publisher(Int32MultiArray, '/base/telemetry', 10)
         self.event = self.create_publisher(String, '/base/event', 10)
         self.bearing = self.create_publisher(PointStamped, '/target/bearing', 10)
+        self.scan = self.create_publisher(LaserScan, '/scan', 10)
         self.create_subscription(Twist, '/cmd_vel', self.on_cmd, 10)
         self.create_service(Trigger, '/encoder_odom/arm', self.on_arm)
         self.create_service(SetBool, '/encoder_odom/carry', self.on_carry)
@@ -47,6 +51,14 @@ class FakeRobot(Node):
         if self.open_at is not None and time.monotonic() >= self.open_at:
             self.servo, self.open_at = [40, 140], None  # 서보는 1도/30 ms라 열리는 데 시간이 걸림
         self.telemetry.publish(Int32MultiArray(data=[0, 0, 0, 0, 0, 0] + self.psd + self.servo))
+        if self.scan_points is not None:  # 로봇 좌표 (x, y) 점들, 나머지 광선은 무효 0.0
+            scan = LaserScan()
+            scan.header.frame_id = 'base_link'
+            scan.angle_increment, scan.range_min, scan.range_max = math.radians(1.0), 0.12, 12.0
+            scan.ranges = [0.0] * 360
+            for x, y in self.scan_points:
+                scan.ranges[round(math.degrees(math.atan2(y, x))) % 360] = math.hypot(x, y)
+            self.scan.publish(scan)
 
     def on_cmd(self, msg):
         self.cmd = (msg.linear.x, msg.angular.z)
@@ -110,6 +122,13 @@ def verify():
 
         robot.wait('APPROACH: 중앙에 보이면 직진',
                    lambda: robot.cmd and robot.cmd[0] > 0 and robot.cmd[1] == 0, 5, see=True)
+        # 몸통 왼쪽 앞 옆에 장애물: 큐브를 보고 있어도 밀지 않고 뒤로 뺌 (실물 11회차)
+        robot.scan_points = [(x, 0.17) for x in (0.02, 0.05, 0.08, 0.11)]
+        robot.wait('APPROACH: 몸통 옆 장애물(라이다) → 직진 멈추고 후진',
+                   lambda: robot.cmd and robot.cmd[0] < 0, 5, see=True)
+        robot.scan_points = []
+        robot.wait('장애물 사라진 뒤 다시 접근 직진',
+                   lambda: robot.cmd and robot.cmd[0] > 0 and robot.cmd[1] == 0, 15, see=True)
         robot.psd[0] = 300  # 큐브가 집게 앞: 화면 아래로 잘려 검출이 끊겨도
         end, turned = time.monotonic() + 1.5, False
         while time.monotonic() < end:

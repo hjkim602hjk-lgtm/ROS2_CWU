@@ -23,12 +23,15 @@ def hint_goal(hint, standoff):
 
 
 def frontier_goal(grid, resolution, origin, robot, clearance, min_cells, min_dist,
-                  blacklist=(), blacklist_radius=0.4):
+                  blacklist=(), blacklist_radius=0.4, passage=0.075):
     """Nearest frontier cell centre in map metres, else None.
 
     grid: OccupancyGrid data as a (height, width) array, -1 unknown, 0..100 occupied %.
     A frontier cell is free and touches unknown; clusters under min_cells are noise.
     Cells closer than `clearance` to an occupied cell cannot hold the robot.
+    Only frontiers joined to the robot through seen floor at least `passage` from walls count:
+    라이다가 벽 틈으로 넘겨 본 바닥은 직선으로 가까워도 못 갑니다 (2026-10-16 11회차,
+    0.64 m 앞 벽 너머 경계로 Nav2가 23 s 재시도).
     """
     free = (grid >= 0) & (grid < 50)
     occupied = grid >= 50
@@ -37,7 +40,14 @@ def frontier_goal(grid, resolution, origin, robot, clearance, min_cells, min_dis
     count, labels, stats, _ = cv2.connectedComponentsWithStats(frontier, connectivity=8)
     big = [i for i in range(1, count) if stats[i, cv2.CC_STAT_AREA] >= min_cells]
     room = cv2.distanceTransform((~occupied).astype(np.uint8), cv2.DIST_L2, 3) * resolution
-    rows, cols = np.nonzero(np.isin(labels, big) & (room >= clearance))
+    _, area = cv2.connectedComponents((free & (room >= passage)).astype(np.uint8), connectivity=8)
+    # 로봇이 벽에 바짝 붙어 제 칸이 통로 기준에 못 미쳐도 반경 안 통로 칸에서 출발
+    r = int((robot[1] - origin[1]) / resolution)
+    c = int((robot[0] - origin[0]) / resolution)
+    k = int(math.ceil(passage / resolution))
+    around = area[max(r - k, 0):max(r + k + 1, 0), max(c - k, 0):max(c + k + 1, 0)]
+    reachable = np.isin(area, around[around > 0])
+    rows, cols = np.nonzero(np.isin(labels, big) & (room >= clearance) & reachable)
     if not len(rows):
         return None
     xs = origin[0] + (cols + 0.5) * resolution
@@ -79,6 +89,29 @@ def backoff_direction(telemetry, threshold):
     if rear and not front:
         return 1
     return 0
+
+
+def side_block(ranges, angle_min, angle_inc, yaw_offset, reach, half_width, min_points=3):
+    """+1 (left) / -1 (right) when LiDAR points sit beside the front half of the body, else 0.
+
+    직진하면 몸통 옆이 그 점을 긁거나 밉니다 (2026-10-16 11회차: 큐브 접근 중 옆면에 걸린 장애물을
+    그대로 밀고 감 — collision monitor 원은 몸체 바깥선과 같아 여유가 없고, 측면 PSD 정지는 꺼져 있음).
+    50 mm 큐브는 라이다(약 170 mm) 아래라 여기 안 잡힙니다. 정면(x > reach)은 collision monitor·정면 PSD 몫.
+    무효 측정(0.0·inf)은 버리고, 잡음 한두 점은 무시합니다.
+    """
+    side = 0
+    count = 0
+    for i, r in enumerate(ranges):
+        if not math.isfinite(r) or r <= 0.0:
+            continue
+        a = angle_min + i * angle_inc + yaw_offset
+        x, y = r * math.cos(a), r * math.sin(a)
+        if 0.0 <= x <= reach and abs(y) <= half_width:
+            count += 1
+            side += 1 if y > 0 else -1
+    if count < min_points:
+        return 0
+    return 1 if side >= 0 else -1
 
 
 def spin_plan(ranges, angle_min, angle_inc, yaw_offset, open_dist, half_fov_deg, min_gap_deg):

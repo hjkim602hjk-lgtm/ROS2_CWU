@@ -28,7 +28,7 @@ from tf2_ros import Buffer, TransformException, TransformListener
 
 from cwu_nav.go_home import home_goal
 from cwu_nav.mission_logic import (FRONT, SERVO_L, SERVO_R, backoff_direction, frontier_goal,
-                                   hint_goal, is_grasp, spin_plan, wrap)
+                                   hint_goal, is_grasp, side_block, spin_plan, wrap)
 from cwu_nav.servo import follow, yaw_error
 
 # 보드 정지(ABORT 등)를 받으면 BACKOFF로 처리하는 상태
@@ -49,13 +49,14 @@ class Mission(Node):
             'search_hint': [1.6, 1.6], 'hint_standoff': 0.6, 'spin_speed': 0.4,
             'spin_open_dist': 0.6, 'camera_half_fov_deg': 30.0, 'spin_min_gap_deg': 5,
             'k_yaw': 1.2, 'max_yaw': 0.8, 'min_yaw': 0.0,
-            'align_tol_rad': 0.09, 'approach_speed': 0.06,
+            'align_tol_rad': 0.09, 'approach_speed': 0.06, 'side_guard_reach': 0.165, 'side_guard_width': 0.18,
             'sample_timeout_s': 0.5, 'confirm_count': 3, 'confirm_window_s': 1.0,
             'blind_forward_s': 1.0, 'grasp_target_age_s': 2.0,
             'grip_angles': [99, 78], 'open_angles': [40, 140], 'grip_timeout_s': 4.0,
             'arm_timeout_s': 2.0, 'backoff_speed': 0.05, 'backoff_s': 1.5,
             'hold_min_raw': 550, 'hold_lost_s': 1.0, 'retry_wait_s': 2.0,
-            'frontier_clearance': 0.22, 'frontier_min_cells': 8, 'frontier_min_dist': 0.5,
+            'frontier_clearance': 0.15, 'frontier_min_cells': 8, 'frontier_min_dist': 0.5,
+            'frontier_passage': 0.075,
             'blacklist_radius': 0.4, 'max_aborts': 8, 'abort_window_s': 60.0,
         }
         self.declare_parameters('', list(defaults.items()))
@@ -80,7 +81,7 @@ class Mission(Node):
         self.sightings = []          # (수신 시각 s, 화면 중앙선 기준 방향 오차 rad)
         self.armed, self.arm_at, self.aborts = False, -math.inf, []
         self.goal_id, self.goal, self.hint_done, self.blacklist = 0, None, False, []
-        self.released = self.holding = False
+        self.released = self.holding = self.side_hit = False
         self.resume = 'SPIN'
         self.state, self.since, self.start = 'INIT', self.now(), self.now()
         self.create_timer(1.0 / self.p['rate_hz'], self.tick)
@@ -283,18 +284,35 @@ class Mission(Node):
         self.get_logger().info(
             f'트인 방향만 둘러봄: {"반시계" if self.spin_dir > 0 else "시계"} {math.degrees(self.spin_target):.0f}도')
 
-    def open_spin(self):
-        """(ccw, cw) degrees covering every direction open beyond spin_open_dist, else None."""
+    def laser_yaw(self):
+        """Laser yaw in base_link (rad), None without scan or TF."""
         if self.scan is None:
             return None
         try:
-            tf = self.tf.lookup_transform('base_link', self.scan.header.frame_id, Time())
+            q = self.tf.lookup_transform('base_link', self.scan.header.frame_id, Time()).transform.rotation
         except TransformException:
             return None
-        q, p = tf.transform.rotation, self.p
+        return 2 * math.atan2(q.z, q.w)
+
+    def open_spin(self):
+        """(ccw, cw) degrees covering every direction open beyond spin_open_dist, else None."""
+        yaw, p = self.laser_yaw(), self.p
+        if yaw is None:
+            return None
         return spin_plan(self.scan.ranges, self.scan.angle_min, self.scan.angle_increment,
-                         2 * math.atan2(q.z, q.w), p['spin_open_dist'], p['camera_half_fov_deg'],
-                         p['spin_min_gap_deg'])
+                         yaw, p['spin_open_dist'], p['camera_half_fov_deg'], p['spin_min_gap_deg'])
+
+    def approach_drive(self, linear, angular=0.0):
+        """Approach command, but never push forward with an obstacle beside the body (LiDAR)."""
+        yaw, p = self.laser_yaw(), self.p
+        side = 0 if linear <= 0 or yaw is None else side_block(
+            self.scan.ranges, self.scan.angle_min, self.scan.angle_increment, yaw,
+            p['side_guard_reach'], p['side_guard_width'])
+        if not side:
+            return self.drive(linear, angular)
+        self.drive()
+        self.side_hit = True  # 보드 정지처럼 처리하되 측면 PSD 값과 상관없이 뒤로 뺌
+        self.on_stop(f'# ABORT SIDE_LIDAR {"LEFT" if side > 0 else "RIGHT"}')
 
     def do_spin(self):
         p = self.p
@@ -325,7 +343,8 @@ class Mission(Node):
                 found = frontier_goal(
                     grid, info.resolution, (info.origin.position.x, info.origin.position.y),
                     pose[:2], p['frontier_clearance'], p['frontier_min_cells'],
-                    p['frontier_min_dist'], self.blacklist, p['blacklist_radius'])
+                    p['frontier_min_dist'], self.blacklist, p['blacklist_radius'],
+                    p['frontier_passage'])
             if found is None:
                 self.get_logger().warn('갈 곳이 없습니다. 실패 목록을 비우고 중앙 힌트부터 다시 봅니다.')
                 self.blacklist.clear()
@@ -369,14 +388,14 @@ class Mission(Node):
             if self.now() - self.final_since > p['final_timeout_s']:
                 self.get_logger().info('PSD 직진 중 보드 정지 없음: 다시 둘러봅니다.')
                 return self.enter('SPIN')
-            return self.drive(p['approach_speed'])
+            return self.approach_drive(p['approach_speed'])
         if self.seen(p['sample_timeout_s']):
-            return self.drive(*follow(self.sightings[-1][1], p['k_yaw'], p['max_yaw'],
-                                      p['min_yaw'], p['align_tol_rad'], p['approach_speed']))
+            return self.approach_drive(*follow(self.sightings[-1][1], p['k_yaw'], p['max_yaw'],
+                                               p['min_yaw'], p['align_tol_rad'], p['approach_speed']))
         # 가까워지면 큐브가 화면 아래로 빠집니다. 정렬된 채 놓쳤으면 잠깐 그대로 직진(PSD가 멈춤).
         if (self.sightings and abs(self.sightings[-1][1]) < p['align_tol_rad']
                 and self.now() - self.sightings[-1][0] <= p['sample_timeout_s'] + p['blind_forward_s']):
-            return self.drive(p['approach_speed'])
+            return self.approach_drive(p['approach_speed'])
         self.get_logger().info('목표물 상실: 다시 둘러봅니다.')
         self.enter('SPIN')
 
@@ -445,7 +464,8 @@ class Mission(Node):
         t = self.psd_peak()
         if self.holding:
             t[FRONT] = 0  # 쥔 큐브가 정면 PSD 앞에 있음. 운반 중 정면은 보드도 검사하지 않음
-        self.back_dir = backoff_direction(t, self.p['psd_threshold'])
+        self.back_dir = backoff_direction(t, self.p['psd_threshold']) or (-1 if self.side_hit else 0)
+        self.side_hit = False
         self.request_arm()
         self.back_since = None
 

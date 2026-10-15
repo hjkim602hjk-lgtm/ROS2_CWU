@@ -1,7 +1,7 @@
 # Nav2 주행 경로 전체를 하드웨어 없이 자동 검증하는 스크립트입니다.
 # 가상 센서를 cmd_vel 모드로 띄워 SLAM → Nav2 → /cmd_vel → 실제 이동까지 한 바퀴를 확인합니다.
 # 목표점 도달 후 시작점 복귀까지 시켜 미션1의 왕복 구조를 같은 방식으로 검사합니다.
-# 마지막으로 이미 본 상자 벽 위를 목표로 주어 코스트맵이 장애물을 실제로 막는지도 확인합니다.
+# 마지막으로 닫힌 바깥벽 너머를 목표로 주어 코스트맵이 벽을 실제로 막는지도 확인합니다.
 # 기존 원운동 데모는 /cmd_vel을 무시하므로 이 검사를 대신하지 못합니다.
 
 """Drive a Nav2 goal and a return trip on synthetic sensors; no hardware needed."""
@@ -26,9 +26,9 @@ from tf2_ros import Buffer, TransformListener
 # 데모 방은 3.6 m이고 내부 상자가 x,y 0.9~1.3에 있습니다.
 GOAL = (1.0, -0.8)        # 상자 밖의 빈 공간
 HOME = (0.0, 0.0)
-# 출발점에서 보이는 상자 서쪽 벽. 상자 한가운데는 안 본 면이 SLAM 지도에 "미탐색"이라 그쪽으로 들어가는
-# 경로가 나올 수 있어 쓰지 않습니다 (전역 비용지도 = SLAM 지도, 2026-10-16).
-BLOCKED = (0.9, 1.1)
+# 동쪽 바깥벽(x = 1.8) 너머 0.5 m. 계획용 반경을 0.075로 줄였어도(보이는 틈은 길) 닫힌 벽은 못 넘어야 합니다.
+# 상자 벽 위 목표는 계획 허용오차 0.15 안에 상자 밖 빈 칸이 있어 쓰지 않습니다 (2026-10-16).
+BLOCKED = (2.3, 0.0)
 GOAL_TOLERANCE_M = 0.25
 
 
@@ -82,8 +82,8 @@ class Checker(Node):
         which would mean Nav2 is driving through walls it cannot see."""
         status = self.send(x, y, timeout)
         assert status != GoalStatus.STATUS_SUCCEEDED, \
-            '상자 벽 (%.2f, %.2f)에 도달했습니다. 코스트맵에 장애물이 안 찍힙니다' % (x, y)
-        print('PASS: 상자 벽 (%.2f, %.2f) 주행 거부됨 status=%d' % (x, y, status), flush=True)
+            '벽 너머 (%.2f, %.2f)에 도달했습니다. 코스트맵이 벽을 막지 않습니다' % (x, y)
+        print('PASS: 벽 너머 (%.2f, %.2f) 주행 거부됨 status=%d' % (x, y, status), flush=True)
 
     def drive_to(self, x, y, timeout):
         status = self.send(x, y, timeout)

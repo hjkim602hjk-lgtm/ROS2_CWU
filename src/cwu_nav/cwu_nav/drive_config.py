@@ -24,10 +24,10 @@ def configure_navigation(config, directory, measured=None):
                for k in required) or measured['robot_radius'] > .2:
             raise ValueError('Measure drive limits and expanded radius (<= 0.20 m) first')
         m = measured
-        # ① 코스트맵(장애물 지도)의 로봇 크기 — 벽에서 이만큼 떨어져 경로를 짬
+        # ① 로컬 코스트맵의 로봇 크기 = 실제 몸체. 전역 코스트맵은 nav2.yaml의 계획용 반경을 그대로 둡니다
+        #    (400 mm 통로가 지도에서 좁게 보여도 길로 계획, 2026-10-16).
         #    nav2.yaml 구조: local_costmap: { local_costmap: { ros__parameters: {...} } }
-        for name in ('local_costmap', 'global_costmap'):
-            config[name][name]['ros__parameters']['robot_radius'] = m['robot_radius']
+        config['local_costmap']['local_costmap']['ros__parameters']['robot_radius'] = m['robot_radius']
         # ② 경로 추종 컨트롤러(Regulated Pure Pursuit) 속도
         controller = config['controller_server']['ros__parameters']['FollowPath']
         controller.update(desired_linear_vel=m['max_linear_speed'],

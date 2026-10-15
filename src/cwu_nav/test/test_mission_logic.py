@@ -7,7 +7,8 @@ import math
 
 import numpy as np
 
-from cwu_nav.mission_logic import backoff_direction, frontier_goal, hint_goal, is_grasp, spin_plan
+from cwu_nav.mission_logic import (backoff_direction, frontier_goal, hint_goal, is_grasp, side_block,
+                                   spin_plan)
 
 RES = 0.05
 
@@ -47,6 +48,45 @@ def test_blacklisted_and_too_close_frontiers_are_skipped():
                          blacklist=[first], blacklist_radius=0.4, **args) is None
     assert frontier_goal(corridor_map(), RES, (0.0, 0.0), (1.9, 0.5),
                          clearance=0.2, min_cells=3, min_dist=1.0) is None
+
+
+def test_floor_seen_over_a_wall_is_not_a_goal_but_any_gap_is_a_path():
+    """Robot room x < 1 m; wall at x = 1 m; floor seen beyond it up to the unknown at x = 2 m."""
+    def room_with_gap(gap_rows):
+        grid = corridor_map()
+        grid[:, 0] = 100                     # closed on the left too
+        grid[:, 20] = 100                    # wall at x = 1 m
+        grid[gap_rows, 20] = 0
+        return grid
+    args = dict(clearance=0.15, min_cells=3, min_dist=0.5, passage=0.075)
+    # closed wall (LiDAR saw over it): straight-line close, but no way through → no goal
+    assert frontier_goal(room_with_gap(slice(0, 0)), RES, (0.0, 0.0), (0.5, 0.5), **args) is None
+    # a 400 mm opening drawn as 0.25 m (walls one cell thick into it) is still a path
+    goal = frontier_goal(room_with_gap(slice(8, 13)), RES, (0.0, 0.0), (0.5, 0.5), **args)
+    assert goal is not None and math.isclose(goal[0], 1.975)
+
+
+def scan_of(points):
+    """360 one-degree rays from (x, y) points in the robot frame (laser yaw 0); others invalid 0.0."""
+    ranges = [0.0] * 360
+    for x, y in points:
+        ranges[int(round(math.degrees(math.atan2(y, x)))) % 360] = math.hypot(x, y)
+    return ranges, 0.0, math.radians(1.0)
+
+
+def test_side_block_sees_an_obstacle_beside_the_front_half_only():
+    def block(points):
+        ranges, a0, inc = scan_of(points)
+        return side_block(ranges, a0, inc, 0.0, reach=0.165, half_width=0.18)
+    beside_left = [(x, 0.17) for x in (0.02, 0.05, 0.08, 0.11)]
+    assert block(beside_left) == 1
+    assert block([(x, -y) for x, y in beside_left]) == -1
+    # 400 mm corridor, robot centred: walls 0.20 m to each side → clear
+    assert block([(x, s * 0.20) for x in (0.0, 0.05, 0.1, 0.15) for s in (1, -1)]) == 0
+    # wall straight ahead (front PSD / collision monitor job) and points behind → clear
+    assert block([(0.30, y) for y in (-0.05, 0.0, 0.05)] + [(-0.1, 0.17), (-0.05, 0.17), (-0.12, 0.16)]) == 0
+    # one or two noise points do not stop the approach
+    assert block([(0.05, 0.17), (0.08, 0.17)]) == 0
 
 
 def test_single_cell_noise_is_not_a_frontier():

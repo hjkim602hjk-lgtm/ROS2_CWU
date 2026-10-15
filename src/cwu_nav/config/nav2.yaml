@@ -143,7 +143,11 @@ global_costmap:
       rolling_window: false
       resolution: 0.05
       track_unknown_space: true
-      robot_radius: 0.150
+      # 계획용 반경 (몸체 0.150보다 작게, drive_config.py가 덮어쓰지 않음). 경기장 통로·장애물 간격은 400 mm 이상이라
+      # (사용자 확인 2026-10-16) 지도에 보이는 틈은 모두 길입니다. 5 cm 칸에서 벽이 통로 안쪽으로 한 칸씩 찍히면
+      # 400 mm 통로가 300 mm로 보여 반경 0.150이면 막힘이 되므로, 지도상 0.2 m 이상 틈은 지나가게 0.075.
+      # 닿지 않게 하는 것은 실제 몸체 크기의 collision monitor·로컬 비용지도.
+      robot_radius: 0.075
       plugins: [static_layer, inflation_layer]
       static_layer:
         plugin: nav2_costmap_2d::StaticLayer
@@ -152,6 +156,7 @@ global_costmap:
         footprint_clearing_enabled: true
       inflation_layer:
         plugin: nav2_costmap_2d::InflationLayer
+        # 사용자 결정 0.17 유지 (2026-10-16, 0.35 제안 반려)
         inflation_radius: 0.17
         cost_scaling_factor: 3.0
 

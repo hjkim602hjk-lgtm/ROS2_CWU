@@ -24,6 +24,8 @@ def test_measured_limits_cover_rotation_and_stopping():
     # Must cover the reaction delay plus the braking distance at full speed.
     assert p['Approach']['time_before_collision'] == pytest.approx(.9 + .04 / .1)
     assert config['local_costmap']['local_costmap']['ros__parameters']['robot_radius'] == .18
+    # global keeps its smaller planning radius: a 400 mm gap drawn narrower is still a path
+    assert config['global_costmap']['global_costmap']['ros__parameters']['robot_radius'] < .15
     assert config['velocity_smoother']['ros__parameters']['max_velocity'] == [.1, 0., .5]
     assert config['velocity_smoother']['ros__parameters']['min_velocity'][0] == 0.
     for key in ('default_nav_to_pose_bt_xml', 'default_nav_through_poses_bt_xml'):
