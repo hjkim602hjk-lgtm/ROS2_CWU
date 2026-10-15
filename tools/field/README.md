@@ -13,3 +13,4 @@
 | `home_err.py START END` | 두 스캔 정합 → 실제 위치 차 (SLAM 자세를 초기값으로) |
 | `timeline.py BAG PAIRS` | map→odom 튐, 구간별 SLAM/odom 오차 |
 | `final_pose.py BAG x y deg` | 녹화(또는 재생 결과)의 최종 SLAM 자세 vs 실제 |
+| `rviz.sh` | (PC, 시험용) RViz(지도·비용지도·경로·웹캠) + 웹캠 디코더. RViz를 닫으면 디코더도 종료 |
