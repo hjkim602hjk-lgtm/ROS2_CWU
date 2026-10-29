@@ -184,6 +184,33 @@ def spin_plan(ranges, angle_min, angle_inc, yaw_offset, open_dist, half_fov_deg,
     return ccw, cw
 
 
+def escape_direction(ranges, angle_min, angle_inc, yaw_offset, contact, half_width, travel, min_points=3):
+    """Straight escape from a body-contact jam: -1 reverse, +1 forward, 0 boxed in, None when nothing touches.
+
+    몸체에 붙은 점(중심에서 contact 안, min_points개 이상)이 있으면 가장 가까운 점이 앞쪽(x ≥ 0)이면 후진,
+    뒤쪽이면 전진을 먼저 고르고, 그 방향 직선 통로(몸 폭 half_width, 몸 끝에서 travel까지)에 점이 없을
+    때만 그쪽으로 뺍니다. 막혀 있으면 반대쪽, 둘 다 막히면 0. 2026-10-17 18·19회차: 옆이 닿은 채
+    collision monitor가 모든 명령을 0으로 바꿔 17~22 s 그대로 멈춤.
+    """
+    points = []
+    for i, r in enumerate(ranges):
+        if math.isfinite(r) and r > 0.0:
+            a = angle_min + i * angle_inc + yaw_offset
+            points.append((r * math.cos(a), r * math.sin(a), r))
+    touching = [p for p in points if p[2] < contact]
+    if len(touching) < min_points:
+        return None
+    nearest = min(touching, key=lambda p: p[2])
+    first = -1 if nearest[0] >= 0.0 else 1
+
+    def clear(direction):
+        return not any(0.0 < direction * x <= half_width + travel and abs(y) < half_width for x, y, _ in points)
+    for direction in (first, -first):
+        if clear(direction):
+            return direction
+    return 0
+
+
 def wrap(angle):
     """Angle folded into (-pi, pi]."""
     return math.atan2(math.sin(angle), math.cos(angle))

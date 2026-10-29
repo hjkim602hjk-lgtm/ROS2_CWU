@@ -28,7 +28,7 @@ from tf2_ros import Buffer, TransformException, TransformListener
 
 from cwu_nav.go_home import home_goal
 from cwu_nav.mission_logic import (FRONT, SERVO_L, SERVO_R, backoff_direction, clear_turn, dead_end,
-                                   frontier_goal, hint_goal, is_grasp, side_block, spin_plan, wrap)
+                                   escape_direction, frontier_goal, hint_goal, is_grasp, side_block, spin_plan, wrap)
 from cwu_nav.servo import follow, yaw_error
 
 # 보드 정지(ABORT 등)를 받으면 BACKOFF로 처리하는 상태
@@ -46,7 +46,7 @@ class Mission(Node):
         defaults = {
             'bearing_topic': '/target/bearing', 'cmd_topic': '/cmd_vel', 'rate_hz': 20.0,
             'psd_threshold': 550, 'grasp_front_min': 300, 'near_front_min': 250, 'final_timeout_s': 4.0,
-            'search_hint': [1.6, 1.6], 'hint_standoff': 0.6, 'spin_speed': 0.4,
+            'search_hint': [1.6, 1.6], 'hint_standoff': 0.6, 'spin_speed': 0.4, 'initial_spin_deg': 90.0,
             'spin_open_dist': 0.6, 'camera_half_fov_deg': 30.0, 'spin_min_gap_deg': 5,
             'k_yaw': 1.2, 'max_yaw': 0.8, 'min_yaw': 0.0,
             'align_tol_rad': 0.09, 'approach_speed': 0.06, 'side_guard_reach': 0.165, 'side_guard_width': 0.165,
@@ -59,6 +59,7 @@ class Mission(Node):
             'frontier_clearance': 0.15, 'frontier_min_cells': 8, 'frontier_min_dist': 0.5,
             'frontier_passage': 0.075, 'dead_end_front': 0.35, 'dead_end_side': 0.35, 'dead_end_back': 0.5,
             'blacklist_radius': 0.4, 'max_aborts': 8, 'abort_window_s': 60.0,
+            'stuck_s': 3.0, 'contact_radius': 0.185, 'escape_half_width': 0.15, 'escape_topic': '/cmd_vel_safe',
         }
         self.declare_parameters('', list(defaults.items()))
         self.p = {key: self.get_parameter(key).value for key in defaults}
@@ -66,6 +67,9 @@ class Mission(Node):
         self.tf = Buffer()
         self.tf_listener = TransformListener(self.tf, self)
         self.cmd = self.create_publisher(Twist, self.p['cmd_topic'], 10)
+        # 막힘 탈출 전용: collision monitor 출력 토픽에 직접 씁니다 (닿은 채로는 monitor가 모든 명령을 0으로 바꿈).
+        # 대신 가는 쪽 통로가 비었는지는 escape_direction이 라이다로 확인합니다.
+        self.escape_cmd = self.create_publisher(Twist, self.p['escape_topic'], 10)
         self.create_subscription(PointStamped, self.p['bearing_topic'], self.on_bearing, 10)
         self.create_subscription(Int32MultiArray, '/base/telemetry', self.on_telemetry, 10)
         self.create_subscription(String, '/base/event', self.on_event, 10)
@@ -83,6 +87,9 @@ class Mission(Node):
         self.armed, self.arm_at, self.aborts = False, -math.inf, []
         self.goal_id, self.goal, self.hint_done, self.blacklist = 0, None, False, []
         self.released = self.holding = self.side_hit = False
+        self.initial_spin = True     # 출발 직후 첫 SPIN만 반시계 initial_spin_deg 고정
+        self.motion_ref = None       # 막힘 판단: (시각, x, y, yaw) — 이 뒤로 움직이지 않은 시간
+        self.escape_dir, self.escaping = None, False
         self.detour, self.detours = None, 0  # 접근 중 비켜 가기 (목표 방향, 회전 제한 시각, 직진 끝 시각)
         self.resume = 'SPIN'
         self.state, self.since, self.start = 'INIT', self.now(), self.now()
@@ -156,7 +163,7 @@ class Mission(Node):
     def drive(self, linear=0.0, angular=0.0):
         msg = Twist()
         msg.linear.x, msg.angular.z = float(linear), float(angular)
-        self.cmd.publish(msg)
+        (self.escape_cmd if self.escaping else self.cmd).publish(msg)
 
     def call(self, client, request, done=None):
         if not client.service_is_ready():
@@ -223,6 +230,8 @@ class Mission(Node):
     def enter(self, state):
         self.get_logger().info(f'{self.state} → {state} ({self.now() - self.start:.0f} s)')
         self.state, self.since = state, self.now()
+        self.motion_ref = None
+        self.escaping = False  # 탈출 출력은 그 BACKOFF 안에서만 (start_backoff가 다시 켬)
         getattr(self, 'start_' + state.lower(), lambda: None)()
 
     def tick(self):
@@ -231,7 +240,36 @@ class Mission(Node):
             event, self.pending = self.pending[0], None
             if self.state in MOVING:
                 self.on_stop(event)
+        if self.state in ('GOTO', 'RETURN', 'SPIN') and self.stuck():
+            return
         getattr(self, 'do_' + self.state.lower())()
+
+    def stuck(self):
+        """Body touching an obstacle and no motion for stuck_s → straight escape through BACKOFF.
+
+        2026-10-17 18·19회차: Nav2 주행 중 옆이 닿자 collision monitor가 회전까지 0으로 바꿔 그대로 멈춤
+        (보드 ABORT가 없어 기존 후퇴도 안 돎). 닿은 점이 없으면 경로 계획 대기 등 정상 정지로 봅니다.
+        """
+        pose, now = self.pose(), self.now()
+        if pose is None or self.scan is None:
+            return False
+        ref = self.motion_ref
+        if ref is None or math.hypot(pose[0] - ref[1], pose[1] - ref[2]) > 0.02 or abs(wrap(pose[2] - ref[3])) > 0.05:
+            self.motion_ref = (now,) + tuple(pose)
+            return False
+        yaw, p = self.laser_yaw(), self.p
+        if now - ref[0] < p['stuck_s'] or yaw is None:
+            return False
+        direction = escape_direction(self.scan.ranges, self.scan.angle_min, self.scan.angle_increment, yaw,
+                                     p['contact_radius'], p['escape_half_width'], p['backoff_speed'] * p['backoff_s'])
+        if direction is None:
+            self.motion_ref = (now,) + tuple(pose)  # 닿은 곳 없음: 다시 잼
+            return False
+        self.get_logger().warn(f'몸체가 닿은 채 {now - ref[0]:.0f} s 정지: '
+                               + {-1: '뒤로', 1: '앞으로', 0: '앞뒤 다 막혀 못'}[direction] + ' 뺍니다.')
+        self.escape_dir = direction
+        self.on_stop('# ABORT STUCK')
+        return True
 
     def on_stop(self, event):
         """The board stopped and disarmed: grasp, or back away and carry on."""
@@ -276,6 +314,12 @@ class Mission(Node):
         # 마지막으로 본 쪽부터 돎. 오차 > 0 이면 목표물이 오른쪽 → 시계 방향
         last_right = bool(self.sightings) and self.sightings[-1][1] > 0
         self.spin_dir, self.spin_target = (-1.0 if last_right else 1.0), 2 * math.pi
+        if self.initial_spin:
+            # 출발 자세는 경기장이 왼쪽 (힌트 가정) → 반시계로 그쪽만 보고 바로 힌트 목표로 출발 (2026-10-17 사용자 결정)
+            self.initial_spin = False
+            self.spin_dir, self.spin_target = 1.0, math.radians(self.p['initial_spin_deg'])
+            self.get_logger().info(f'출발 회전: 반시계 {self.p["initial_spin_deg"]:.0f}도')
+            return
         plan = self.open_spin()
         if plan is None:
             return  # 스캔·TF가 없으면 한 바퀴
@@ -511,6 +555,8 @@ class Mission(Node):
         if self.holding:
             t[FRONT] = 0  # 쥔 큐브가 정면 PSD 앞에 있음. 운반 중 정면은 보드도 검사하지 않음
         self.back_dir = backoff_direction(t, self.p['psd_threshold']) or (-1 if self.side_hit else 0)
+        if self.escape_dir is not None:  # 막힘 탈출: 라이다로 고른 방향, collision monitor 우회
+            self.back_dir, self.escaping, self.escape_dir = self.escape_dir, True, None
         self.side_hit = False
         self.request_arm()
         self.back_since = None
@@ -524,6 +570,7 @@ class Mission(Node):
         if self.back_dir and self.now() - self.back_since < p['backoff_s']:
             return self.drive(self.back_dir * p['backoff_speed'])
         self.drive()
+        self.escaping = False
         self.enter(self.resume if self.resume in ('GOTO', 'RETURN') else 'SPIN')
 
     def start_done(self):

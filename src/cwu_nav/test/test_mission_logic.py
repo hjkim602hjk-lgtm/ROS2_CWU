@@ -7,8 +7,8 @@ import math
 
 import numpy as np
 
-from cwu_nav.mission_logic import (backoff_direction, clear_turn, dead_end, frontier_goal, hint_goal, is_grasp,
-                                   side_block, spin_plan)
+from cwu_nav.mission_logic import (backoff_direction, clear_turn, dead_end, escape_direction, frontier_goal, hint_goal,
+                                   is_grasp, side_block, spin_plan)
 
 RES = 0.05
 
@@ -89,6 +89,24 @@ def test_side_block_sees_an_obstacle_beside_the_front_half_only():
     assert block([(0.30, y) for y in (-0.05, 0.0, 0.05)] + [(-0.1, 0.17), (-0.05, 0.17), (-0.12, 0.16)]) == 0
     # one or two noise points do not stop the approach
     assert block([(0.05, 0.155), (0.08, 0.155)]) == 0
+
+
+def test_escape_direction_backs_off_a_contact_and_checks_the_way_out():
+    def escape(points):
+        ranges, a0, inc = scan_of(points)
+        return escape_direction(ranges, a0, inc, 0.0, contact=0.185, half_width=0.15, travel=0.08)
+    front_right = [(0.10, -0.13), (0.11, -0.12), (0.12, -0.11)]   # 19회차처럼 앞 오른쪽이 닿음
+    assert escape(front_right) == -1
+    assert escape([(-x, y) for x, y in front_right]) == 1           # 뒤가 닿으면 앞으로
+    side = [(0.01, 0.16), (-0.01, 0.16), (0.03, 0.16)]              # 정확히 옆: 앞뒤 통로는 비어 있음
+    assert escape(side) in (-1, 1)
+    wall_behind = [(-0.20, y) for y in (-0.1, 0.0, 0.1)]            # 뒤 통로(몸 끝 + 8 cm 안)에 벽
+    assert escape(side + wall_behind) == 1                          # → 앞으로
+    assert escape(front_right + wall_behind) == 0                   # 닿은 점이 앞 통로, 뒤는 벽: 못 뺌
+    wall_ahead = [(0.20, y) for y in (-0.1, 0.0, 0.1)]
+    assert escape(side + wall_behind + wall_ahead) == 0             # 앞뒤 다 막힘
+    assert escape([(0.30, 0.0), (0.0, 0.25), (-0.3, 0.1)]) is None  # 닿은 점 없음
+    assert escape([(0.10, -0.13)]) is None                          # 잡음 한 점은 무시
 
 
 def test_clear_turn_steers_away_from_a_converging_wall():

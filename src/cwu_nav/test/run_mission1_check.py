@@ -1,6 +1,6 @@
 # 로봇 없이 mission1 상태머신의 전체 흐름을 검증하는 스크립트입니다.
 # 가짜 보드(텔레메트리·이벤트·arm/carry 서비스), 가짜 Nav2(바로 성공하는 액션 서버),
-# 고정 TF를 붙이고 탐색 → 막다른 곳(라이다) 되돌기 → 측면 PSD 후퇴 → 접근 → 몸통 옆 장애물(라이다) 후퇴
+# 고정 TF를 붙이고 탐색 → 막다른 곳(라이다) 되돌기 → 몸체 닿은 채 정지 탈출(/cmd_vel_safe 후진) → 측면 PSD 후퇴 → 접근 → 몸통 옆 장애물(라이다) 후퇴
 # (비켜 가기 회전, 고정 TF라 못 돌면 후퇴) → 재접근 → 정면 PSD 파지
 # → 출발점 복귀 → 종료를 확인합니다.
 # 순수 판단은 test_mission_logic.py가 보고, 여기서는 상태 전이와 토픽·서비스·액션 연결을 봅니다.
@@ -32,7 +32,7 @@ class FakeRobot(Node):
         super().__init__('mission1_check')
         self.psd = [0, 0, 0, 0]          # 앞, 뒤, 좌, 우 raw
         self.servo = [105, 75]           # 지난 실행이 닫힌 채 끝남 (실물 2회차)
-        self.carries, self.goals, self.cmd = [], [], None
+        self.carries, self.goals, self.cmd, self.safe_cmd = [], [], None, None
         self.open_at = self.first_cmd_servo = self.scan_points = self.hold = None
         transform = TransformStamped()
         transform.header.frame_id, transform.child_frame_id = 'map', 'base_link'
@@ -44,6 +44,9 @@ class FakeRobot(Node):
         self.bearing = self.create_publisher(PointStamped, '/target/bearing', 10)
         self.scan = self.create_publisher(LaserScan, '/scan', 10)
         self.create_subscription(Twist, '/cmd_vel', self.on_cmd, 10)
+        # 막힘 탈출은 collision monitor를 건너 출력 토픽에 직접 씀
+        self.create_subscription(Twist, '/cmd_vel_safe',
+                                 lambda m: setattr(self, 'safe_cmd', (m.linear.x, m.angular.z)), 10)
         self.create_service(Trigger, '/encoder_odom/arm', self.on_arm)
         self.create_service(SetBool, '/encoder_odom/carry', self.on_carry)
         self.server = ActionServer(self, NavigateToPose, 'navigate_to_pose', self.on_goal)
@@ -123,7 +126,13 @@ def verify():
         wall = [k / 200 for k in range(-40, 41)]  # 5 mm 간격: 1도 광선마다 벽이 찍히게
         robot.scan_points = [(0.2, y) for y in wall] + [(x, s * 0.2) for x in wall for s in (1, -1)]
         robot.wait('GOTO 중 막다른 곳 → 그 목표를 버리고 돌아서 다음 목표', lambda: len(robot.goals) >= 3, 20)
+        # Nav2 주행 중 앞 오른쪽이 몸체에 닿은 채 멈춤 (18·19회차): 고정 TF라 안 움직이므로 stuck_s 뒤 탈출
+        robot.scan_points = [(0.10, -0.13), (0.11, -0.12), (0.12, -0.11)]
+        robot.wait('GOTO 중 몸체 닿은 채 정지 → collision monitor 건너 후진',
+                   lambda: robot.safe_cmd and robot.safe_cmd[0] < 0, 10)
+        assert not (robot.cmd and robot.cmd[0] < 0), '탈출 후진이 collision monitor 입력(/cmd_vel)으로 갔습니다'
         robot.scan_points = []
+        robot.wait('탈출 뒤 같은 목표로 GOTO 재개', lambda: len(robot.goals) >= 4 and robot.goals[3] == robot.goals[2], 10)
         robot.hold.set_result(True)
         robot.hold = None
         robot.wait('도착 뒤 다시 SPIN', lambda: robot.cmd and robot.cmd[1] != 0, 5)

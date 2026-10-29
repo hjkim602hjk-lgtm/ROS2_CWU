@@ -23,6 +23,7 @@ mission1:
     search_hint: [1.6, 1.6]
     hint_standoff: 0.6
     spin_speed: 0.4              # rad/s, 제자리 한 바퀴 약 16 s
+    initial_spin_deg: 90.0       # 출발 직후 첫 회전만 반시계 고정 각도, 끝나면 바로 힌트 목표로 출발 (2026-10-17)
     # 제자리 탐색은 라이다로 spin_open_dist보다 멀리 트인 방향(spin_min_gap_deg 이상 폭)만 카메라가 지나가게 돎.
     # 벽(200 mm)은 큐브(50 mm)를 가리므로 벽 쪽은 볼 필요 없음. 트인 곳이 없으면 돌지 않음 (2026-10-15).
     spin_open_dist: 0.6
@@ -63,6 +64,13 @@ mission1:
     # PSD 정지 뒤 막힌 쪽 반대로 직진해 빠지기
     backoff_speed: 0.05
     backoff_s: 1.5               # 7.5 cm
+    # 막힘 탈출 (2026-10-17 18·19회차): GOTO·RETURN·SPIN 중 stuck_s 동안 2 cm·3° 넘게 안 움직이고 라이다 점이
+    # 중심에서 contact_radius 안(collision monitor 원 0.165 + 2 cm)이면, 가장 가까운 점 반대쪽 직선으로 위 거리만큼 뺌.
+    # 가는 쪽 통로(몸 반폭 escape_half_width = 실측 반경)가 비었을 때만. collision monitor를 거치지 않고 escape_topic에 직접 씀.
+    stuck_s: 3.0
+    contact_radius: 0.185
+    escape_half_width: 0.150
+    escape_topic: /cmd_vel_safe
 
     # 운반 중 정면 PSD가 이 값 아래로 hold_lost_s 이상이면 놓친 것. 0이면 검사 안 함.
     # 2026-10-14 실측: 큐브 문 상태 median 615(min 568), 큐브 없이 닫힘 579 → 닫힌 집게 날이 PSD를
