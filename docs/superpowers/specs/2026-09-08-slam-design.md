@@ -48,7 +48,7 @@ accuracy, G4 hardware operation, loop closure quality, or Raspberry Pi throughpu
   범위 밖입니다. 미션 중 외부 통신 금지 규정 때문에 **개발용 전용**입니다.
 
 > [!info] 작성 당시의 기준
-> 이 설계 작성 시에는 Agent.md만 참고했습니다. 현재는 [[docs/competition_rules|대회 규정 정리]]가 추가되어 있습니다.
+> 이 설계 작성 시에는 AGENTS.md만 참고했습니다. 현재는 [[docs/competition_rules|대회 규정 정리]]가 추가되어 있습니다.
 
 ## 관련 문서
 

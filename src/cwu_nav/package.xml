@@ -1,11 +1,10 @@
 <?xml version="1.0"?>
 <!-- cwu_nav의 ROS 2 패키지 정보와 실행 의존성을 선언합니다.
-     Nav2 기성 스택의 설정(YAML)·실행(launch)과, 목표물 방향을 바퀴 속도로 바꾸는
-     시각 서보 노드(target_follower)를 제공합니다. -->
+     미션 1 상태머신과 400 mm 격자 플래너(보드의 이산 이동 [F]·[TL/TR] 명령)를 제공합니다. -->
 <package format="3">
   <name>cwu_nav</name>
   <version>0.1.0</version>
-  <description>Nav2 configuration and bringup for the 3.6 m arena, plus the visual servo that keeps the target on the image centre line. No custom planners or controllers.</description>
+  <description>Mission 1 state machine and grid-cell planner for the 3.6 m arena, driving the base through discrete turn/straight board commands.</description>
   <maintainer email="maintainer@example.com">CWU Robot Team</maintainer>
   <license>Apache-2.0</license>
   <buildtool_depend>ament_python</buildtool_depend>
@@ -17,22 +16,13 @@
   <exec_depend>cwu_slam</exec_depend>
   <exec_depend>cwu_base</exec_depend>
   <exec_depend>python3-yaml</exec_depend>
-  <exec_depend>nav2_collision_monitor</exec_depend>
-  <exec_depend>nav2_msgs</exec_depend>
-  <exec_depend>nav2_lifecycle_manager</exec_depend>
   <!-- mission1: 상태머신 -->
-  <exec_depend>action_msgs</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>std_msgs</exec_depend>
-  <exec_depend>std_srvs</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
   <exec_depend>cwu_perception</exec_depend>
   <exec_depend>python3-numpy</exec_depend>
-  <exec_depend>python3-opencv</exec_depend>
-  <!-- Nav2 본체는 용량이 커서 선택 설치합니다. 설치 명령은 README 4장을 따릅니다.
-       sudo apt install ros-humble-navigation2 ros-humble-nav2-bringup
-                        ros-humble-nav2-regulated-pure-pursuit-controller -->
   <test_depend>python3-pytest</test_depend>
   <export><build_type>ament_python</build_type></export>
 </package>

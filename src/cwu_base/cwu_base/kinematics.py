@@ -7,7 +7,7 @@
 #   - 이 파일은 "숫자 계산"만 합니다. 시리얼·ROS 토픽은 전혀 모릅니다.
 #   - 그래서 로봇 없이도 pytest로 "틱 3009.5개 = 바퀴 한 바퀴 = 0.26 m" 같은 걸 시험할 수 있습니다.
 #   - "계산(순수 함수)"과 "입출력(노드)"을 파일로 나누는 게 이 프로젝트의 기본 패턴입니다.
-#     (detect.py ↔ target_detector.py, servo.py ↔ target_follower.py 도 같은 구조)
+#     (detect.py ↔ target_detector.py 도 같은 구조)
 #
 # [공부 노트] 차동구동(differential drive)이란?
 #   왼쪽·오른쪽 바퀴 두 개를 각각 돌려서 움직이는 로봇입니다.

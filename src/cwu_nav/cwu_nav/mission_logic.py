@@ -1,65 +1,14 @@
 # 미션 1 상태머신(mission1.py)이 쓰는 판단을 ROS 없이 계산하는 순수 함수 모음입니다.
-# 다음에 어디를 볼지(중앙 힌트·미탐색 경계), 보드가 멈춘 이유가 파지인지 장애물인지,
-# 막혔을 때 어느 쪽으로 빠질지를 정합니다. 로봇 없이 pytest로 검증합니다.
+# 보드가 멈춘 이유가 파지인지 장애물인지, 제자리에서 어느 쪽으로 얼마나 둘러볼지를 정합니다.
+# 칸 단위 이동 계획은 grid.py에 있습니다. 로봇 없이 pytest로 검증합니다.
 
-"""Pure mission-1 decisions: where to look next, what a board stop means. No ROS."""
+"""Pure mission-1 decisions: what a board stop means, where to look. No ROS."""
 import math
 
-import cv2
 import numpy as np
 
 # /base/telemetry 필드 번호 (README_STM_PI_INTERFACE.md 6절, PSD는 raw ADC)
 FRONT, REAR, LEFT, RIGHT, SERVO_L, SERVO_R = 6, 7, 8, 9, 10, 11
-
-
-def hint_goal(hint, standoff):
-    """Point `standoff` short of the hint on the line from the start (map origin).
-
-    목표물이 힌트 자리에 그대로 있으면 그 위로 올라타지 않고, 카메라가 볼 거리에서 멈춥니다.
-    """
-    distance = math.hypot(*hint)
-    scale = max(0.0, distance - standoff) / distance if distance > 0 else 0.0
-    return hint[0] * scale, hint[1] * scale
-
-
-def frontier_goal(grid, resolution, origin, robot, clearance, min_cells, min_dist,
-                  blacklist=(), blacklist_radius=0.4, passage=0.075):
-    """Nearest frontier cell centre in map metres, else None.
-
-    grid: OccupancyGrid data as a (height, width) array, -1 unknown, 0..100 occupied %.
-    A frontier cell is free and touches unknown; clusters under min_cells are noise.
-    Cells closer than `clearance` to an occupied cell cannot hold the robot.
-    Only frontiers joined to the robot through seen floor at least `passage` from walls count:
-    라이다가 벽 틈으로 넘겨 본 바닥은 직선으로 가까워도 못 갑니다 (2026-10-16 11회차,
-    0.64 m 앞 벽 너머 경계로 Nav2가 23 s 재시도).
-    """
-    free = (grid >= 0) & (grid < 50)
-    occupied = grid >= 50
-    near_unknown = cv2.dilate((grid < 0).astype(np.uint8), np.ones((3, 3), np.uint8)) > 0
-    frontier = (free & near_unknown).astype(np.uint8)
-    count, labels, stats, _ = cv2.connectedComponentsWithStats(frontier, connectivity=8)
-    big = [i for i in range(1, count) if stats[i, cv2.CC_STAT_AREA] >= min_cells]
-    room = cv2.distanceTransform((~occupied).astype(np.uint8), cv2.DIST_L2, 3) * resolution
-    _, area = cv2.connectedComponents((free & (room >= passage)).astype(np.uint8), connectivity=8)
-    # 로봇이 벽에 바짝 붙어 제 칸이 통로 기준에 못 미쳐도 반경 안 통로 칸에서 출발
-    r = int((robot[1] - origin[1]) / resolution)
-    c = int((robot[0] - origin[0]) / resolution)
-    k = int(math.ceil(passage / resolution))
-    around = area[max(r - k, 0):max(r + k + 1, 0), max(c - k, 0):max(c + k + 1, 0)]
-    reachable = np.isin(area, around[around > 0])
-    rows, cols = np.nonzero(np.isin(labels, big) & (room >= clearance) & reachable)
-    if not len(rows):
-        return None
-    xs = origin[0] + (cols + 0.5) * resolution
-    ys = origin[1] + (rows + 0.5) * resolution
-    dist = np.hypot(xs - robot[0], ys - robot[1])
-    ok = dist >= min_dist
-    for bx, by in blacklist:
-        ok &= np.hypot(xs - bx, ys - by) > blacklist_radius
-    if not ok.any():
-        return None
-    i = int(np.argmin(np.where(ok, dist, np.inf)))
-    return float(xs[i]), float(ys[i])
 
 
 def is_grasp(event, telemetry, front_min, approaching, target_recent):
@@ -70,85 +19,10 @@ def is_grasp(event, telemetry, front_min, approaching, target_recent):
     front_min은 보드 임계(550)가 아니라 "정면에 무언가 가깝다"는 기준입니다. 보드는 표본 하나가
     550을 넘으면 멈추지만 20 Hz 텔레메트리에는 그 표본이 안 잡힐 수 있습니다(실물 3회차: 큐브 앞
     정지 때 텔레메트리 최대 461~520). 집게가 열리고 앞이 비면 정면은 185 이하입니다.
+    2026-10-29: 정면 PSD 정지는 mission1이 텔레메트리로 판단해 q로 세우고 "# ABORT PSD_FRONT (Pi)"로 넘김 (이전 판 보드 PSD_BLOCKED).
     """
-    return (approaching and target_recent and 'PSD_BLOCKED' in event
+    return (approaching and target_recent and 'PSD_FRONT' in event
             and telemetry[FRONT] >= front_min)
-
-
-def backoff_direction(telemetry, threshold):
-    """Straight-line escape after a PSD stop: -1 reverse, +1 forward, 0 none/boxed in.
-
-    펌웨어는 직진에 정면 또는 후면만, 회전에는 네 방향을 모두 검사합니다. 그래서 측면이
-    막혔을 때 빠지는 길은 직진뿐입니다.
-    """
-    front = telemetry[FRONT] >= threshold
-    rear = telemetry[REAR] >= threshold
-    side = max(telemetry[LEFT], telemetry[RIGHT]) >= threshold
-    if (front or side) and not rear:
-        return -1
-    if rear and not front:
-        return 1
-    return 0
-
-
-def side_block(ranges, angle_min, angle_inc, yaw_offset, reach, half_width, min_points=3):
-    """+1 (left) / -1 (right) when LiDAR points sit beside the front half of the body, else 0.
-
-    직진하면 몸통 옆이 그 점을 긁거나 밉니다 (2026-10-16 11회차: 큐브 접근 중 옆면에 걸린 장애물을
-    그대로 밀고 감 — collision monitor 원은 몸체 바깥선과 같아 여유가 없고, 측면 PSD 정지는 꺼져 있음).
-    50 mm 큐브는 라이다(약 170 mm) 아래라 여기 안 잡힙니다. 정면(x > reach)은 collision monitor·정면 PSD 몫.
-    무효 측정(0.0·inf)은 버리고, 잡음 한두 점은 무시합니다.
-    """
-    side = 0
-    count = 0
-    for i, r in enumerate(ranges):
-        if not math.isfinite(r) or r <= 0.0:
-            continue
-        a = angle_min + i * angle_inc + yaw_offset
-        x, y = r * math.cos(a), r * math.sin(a)
-        if 0.0 <= x <= reach and abs(y) <= half_width:
-            count += 1
-            side += 1 if y > 0 else -1
-    if count < min_points:
-        return 0
-    return 1 if side >= 0 else -1
-
-
-def clear_turn(ranges, angle_min, angle_inc, yaw_offset, reach, half_width, side, max_deg, step_deg=5):
-    """Smallest in-place turn (rad) away from the blocked `side` after which side_block is clear, else None.
-
-    큐브로 가는 직선이 옆 벽·모서리를 스칠 때 비켜 가기 (2026-10-16 15회차: 통로에 15° 비스듬히 들어가
-    같은 직선으로 9번 재접근하다 미션 중단). 막힌 쪽(+1 왼쪽)의 반대로 돌며, 카메라 화각 안에 큐브가
-    남도록 max_deg까지만 찾습니다. 원형 몸체라 제자리 회전은 새로 닿는 곳이 없습니다.
-    """
-    for deg in range(step_deg, int(max_deg) + 1, step_deg):
-        turn = -side * math.radians(deg)
-        # 로봇이 turn만큼 돌면 같은 점이 -turn만큼 돌아 보입니다
-        if not side_block(ranges, angle_min, angle_inc, yaw_offset - turn, reach, half_width):
-            return turn
-    return None
-
-
-def dead_end(ranges, angle_min, angle_inc, yaw_offset, front_max, side_max, back_min):
-    """True when the robot has driven into a dead end: walls ahead, left and right, open behind.
-
-    2026-10-16 사용자 요청: 세 면이 벽인 곳에 들어오면 바로 되돌아 나가 다른 길을 찾습니다.
-    각 방향(앞 ±20°, 좌 60~120°, 우 −120~−60°, 뒤 160~200°) 광선의 중앙값으로 판단, 무효(0.0·inf)는 먼 곳.
-    앞 기준을 막다른 칸 하나 안(0.35 m)으로 두어 끝 칸 옆으로 꺾이는 통로를 오판하지 않고,
-    뒤가 트여 있어야(들어온 길) 해서 돌아서 출구를 보는 중에는 다시 걸리지 않습니다.
-    """
-    sectors = {'front': [], 'left': [], 'right': [], 'back': []}
-    for i, r in enumerate(ranges):
-        a = math.degrees(wrap(angle_min + i * angle_inc + yaw_offset))
-        name = ('front' if abs(a) <= 20 else 'left' if 60 <= a <= 120
-                else 'right' if -120 <= a <= -60 else 'back' if abs(a) >= 160 else None)
-        if name:
-            sectors[name].append(r if math.isfinite(r) and r > 0.0 else math.inf)
-    if not all(sectors.values()):
-        return False
-    near = {name: float(np.median(rays)) for name, rays in sectors.items()}
-    return (near['front'] < front_max and near['left'] < side_max and near['right'] < side_max
-            and near['back'] > back_min)
 
 
 def spin_plan(ranges, angle_min, angle_inc, yaw_offset, open_dist, half_fov_deg, min_gap_deg):
@@ -182,35 +56,3 @@ def spin_plan(ranges, angle_min, angle_inc, yaw_offset, open_dist, half_fov_deg,
     ccw = max(0.0, float(max((d + half) % 360 for d in open_deg)) - 2 * half)
     cw = max(0.0, float(max((-d + half) % 360 for d in open_deg)) - 2 * half)
     return ccw, cw
-
-
-def escape_direction(ranges, angle_min, angle_inc, yaw_offset, contact, half_width, travel, min_points=3):
-    """Straight escape from a body-contact jam: -1 reverse, +1 forward, 0 boxed in, None when nothing touches.
-
-    몸체에 붙은 점(중심에서 contact 안, min_points개 이상)이 있으면 가장 가까운 점이 앞쪽(x ≥ 0)이면 후진,
-    뒤쪽이면 전진을 먼저 고르고, 그 방향 직선 통로(몸 폭 half_width, 몸 끝에서 travel까지)에 점이 없을
-    때만 그쪽으로 뺍니다. 막혀 있으면 반대쪽, 둘 다 막히면 0. 2026-10-17 18·19회차: 옆이 닿은 채
-    collision monitor가 모든 명령을 0으로 바꿔 17~22 s 그대로 멈춤.
-    """
-    points = []
-    for i, r in enumerate(ranges):
-        if math.isfinite(r) and r > 0.0:
-            a = angle_min + i * angle_inc + yaw_offset
-            points.append((r * math.cos(a), r * math.sin(a), r))
-    touching = [p for p in points if p[2] < contact]
-    if len(touching) < min_points:
-        return None
-    nearest = min(touching, key=lambda p: p[2])
-    first = -1 if nearest[0] >= 0.0 else 1
-
-    def clear(direction):
-        return not any(0.0 < direction * x <= half_width + travel and abs(y) < half_width for x, y, _ in points)
-    for direction in (first, -first):
-        if clear(direction):
-            return direction
-    return 0
-
-
-def wrap(angle):
-    """Angle folded into (-pi, pi]."""
-    return math.atan2(math.sin(angle), math.cos(angle))

@@ -3,8 +3,10 @@
 # 프로토콜과 바퀴 제원은 encoder.yaml에서 읽으며, 미입력 값이 있으면 실행을 거부합니다.
 #
 # [공부 노트] 이 노드의 입력과 출력
-#   입력  : 시리얼 포트 /dev/ttyAMA0 에서 0.05초마다 들어오는 BASE_NAV_V1 CSV 한 줄
-#           (규약: 레포 README_STM_PI_INTERFACE.md, 펌웨어 RobotIntegrated.ino)
+#   입력  : 시리얼 포트 /dev/ttyAMA0 에서 0.05초마다 들어오는 CSV 한 줄 (`t`로 켬)
+#           (규약: 레포 README_STM_PI_INTERFACE.md, 펌웨어 RobotIntegrated.ino 2026-10-29판)
+#   명령  : /base/command (std_msgs/String) "F400", "TL90", "PF0", "q", "7", "8" … → 보드로 그대로 전달
+#           (허용 목록 COMMAND 밖은 버림). 보드는 하트비트·정면 PSD 정지가 없어 정지는 mission1이 q로 합니다.
 #   설정  : config/encoder.yaml (포트, 바퀴 반지름, 트레드, 회전당 틱 …)
 #   출력1 : /odom 토픽 (nav_msgs/Odometry) — 위치 + 속도 + 불확실성
 #   출력2 : TF  odom → base_link — "전원 켠 자리(odom)에서 로봇 몸체(base_link)가 어디 있나"
@@ -21,7 +23,6 @@
 # [공부 노트] 실행 방법
 #   ros2 launch cwu_base encoder.launch.py          # 이 노드만
 #   ros2 topic echo /odom --once                     # 결과 한 번 보기
-#   ※ motor_bridge 와 같은 포트를 쓰므로 둘을 동시에 켜면 안 됩니다.
 
 """Serial encoder ticks to /odom and the odom -> base_link transform."""
 # ── 표준 라이브러리 ──
@@ -32,9 +33,7 @@ import re    # 정규식: "ENC,1499,1406" 에서 숫자만 뽑기
 import rclpy                    # ROS 2 파이썬 클라이언트 라이브러리. 노드를 만들고 돌리는 뼈대
 import serial                   # pyserial: 시리얼 포트 열기/읽기 (apt: python3-serial)
 from geometry_msgs.msg import Quaternion, TransformStamped  # 회전(쿼터니언), TF 한 개
-from geometry_msgs.msg import Twist
 from std_msgs.msg import Int32MultiArray, String
-from std_srvs.srv import SetBool, Trigger
 from nav_msgs.msg import Odometry                           # /odom 메시지 형식
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node                                 # 모든 노드의 부모 클래스
@@ -54,13 +53,16 @@ MAX_BUFFER = 65536
 # 늦게까지 한 줄도 못 받으면 설정이 틀린 것으로 봅니다. 이 유예가 없으면
 # 부팅 때마다 오류가 한 줄 뜨고, 사람은 곧 오류 로그를 무시하게 됩니다.
 STARTUP_GRACE = 3.0
-# 펌웨어 [N1] 텔레메트리 주기는 0.05 s. 이 값은 밀린 줄이 두 poll에 나뉘어 들어와 dt가 0에 가까워도
+# 펌웨어 텔레메트리 주기는 0.05 s(TELEMETRY_MS). 이 값은 밀린 줄이 두 poll에 나뉘어 들어와 dt가 0에 가까워도
 # 한 주기 분량의 이동은 허용하도록 속도 상한 검사의 dt 하한으로 씁니다.
 SAMPLE_PERIOD = 0.1
-# 펌웨어 BASE_NAV_V1 한계(MAX_V_MM_S, MAX_W_RAD_S). 넘으면 보드가 ABORT VELOCITY_RANGE로 멈춥니다.
-MAX_V, MAX_W = 0.15, 1.2
-# 정지 중에도 20 Hz CSV를 켭니다. 펌웨어는 이것 없이 정지 상태에서 텔레메트리를 보내지 않습니다.
-STREAM_ON = b'[N1]\n'
+# 정지 중에도 CSV를 받으려면 't'로 켭니다. 't'는 켜고 끄는 토글이라 응답(STREAM_REPLY ON/OFF)으로
+# 상태를 따라가고, OFF가 오면 다시 보냅니다.
+STREAM_TOGGLE = b't'
+STREAM_REPLY = b'Telemetry = '
+# /base/command 허용 목록. 괄호 명령은 [..]로 감싸 보내고 한 글자 명령(q 정지, 7 열기, 8 잡기)은 그대로.
+COMMAND = re.compile(r'(F\d{3,4}|T[LR]\d{2,3})')
+SINGLE = ('q', '7', '8')
 # 이 줄 뒤의 누적 틱은 0부터 다시 셉니다 (부팅, z 명령).
 COUNTER_RESET = (b'# ROBOT40_V4 READY', b'# ENCODERS_RESET')
 
@@ -74,14 +76,17 @@ COUNTER_RESET = (b'# ROBOT40_V4 READY', b'# ENCODERS_RESET')
 #   돌려주는 값: (왼쪽, 오른쪽) 정수 튜플, 쓸 만한 줄이 없으면 None
 #   ROS 를 안 쓰는 함수라 테스트에서 따로 불러 시험할 수 있습니다.
 # ─────────────────────────────────────────────────────────────────────────────
-def drive_frame(linear, angular):
-    """cmd_vel -> BASE_NAV_V1 "[Vmm/s,rad/s]" (forward +, CCW +). No spaces: a space stops the board.
+def board_command(text):
+    """/base/command text -> bytes for the board, or None if not allowed.
 
-    Both are scaled down together past the firmware limits so the curvature is kept;
-    the firmware aborts and disarms on any value beyond them.
+    "F400" -> b"[F400]", "q" -> b"q". 공백은 보드에서 정지 명령이므로 허용 목록에 넣지 않습니다.
     """
-    scale = max(1.0, abs(linear) / MAX_V, abs(angular) / MAX_W)
-    return f'[V{linear / scale * 1000:.0f},{angular / scale:.3f}]\n'.encode()
+    text = text.strip()
+    if text in SINGLE:
+        return text.encode()
+    if COMMAND.fullmatch(text):
+        return f'[{text}]'.encode()
+    return None
 
 
 def latest_fields(lines, count):
@@ -126,13 +131,11 @@ class EncoderOdometry(Node):
             ('wheel_separation', UNSET),                        # 실측 필수 → 기본 -1
             ('left_field', -1), ('right_field', -1),            # 줄에서 몇 번째 숫자인지
             ('left_sign', 1.0), ('right_sign', 1.0),            # 방향 뒤집기(+1 / -1)
-            ('counter_bits', 32), ('timeout', 0.5), ('max_wheel_speed', 0.5),
+            ('counter_bits', 32), ('timeout', 0.5), ('max_wheel_speed', 0.35),
             ('odom_frame', 'odom'), ('base_frame', 'base_link'),  # TF 좌표계 이름
             ('publish_tf', True),                               # TF 도 낼지
             ('pose_covariance', [0.01, 0.01, 0.05]),            # 위치 불확실성 (x, y, yaw)
             ('twist_covariance', [0.01, 0.01, 0.05]),           # 속도 불확실성
-            # BASE_NAV_V1 주행: /cmd_vel -> [V전진,회전] (drive: true 일 때만)
-            ('drive', False), ('cmd_vel_topic', 'cmd_vel'), ('cmd_timeout', 0.25),
         ])
         # 파라미터 객체 목록 → {이름: 값} 사전으로 정리. 이후 self.cfg['port'] 처럼 꺼내 씁니다.
         self.cfg = {d.name: d.value for d in p}
@@ -145,8 +148,6 @@ class EncoderOdometry(Node):
         self.ticks = None                    # 지난번 (왼쪽, 오른쪽) 틱. None = 아직 없음
         self.stamp = None                    # 지난번 틱을 받은 시각
         self.heard = None                    # 마지막으로 CSV 줄을 받은 시각 (링크 감시용)
-        self.armed = False                   # 보드가 "# ARMED"를 알렸고 아직 풀리지 않음
-        self.want_arm = False                # 다음 send_drive에서 [ARM]을 한 번 보냄
         self.buffer = bytearray()            # 아직 줄바꿈(\n)이 안 온 조각을 모아두는 통
         self.warned = False                  # 끊김 경고를 이미 띄웠는지 (도배 방지)
 
@@ -160,7 +161,7 @@ class EncoderOdometry(Node):
         self.tf = TransformBroadcaster(self)
         # 시리얼 포트 열기
         #   timeout=0      : 읽을 게 없으면 기다리지 않고 바로 빈 값 반환(논블로킹)
-        #   exclusive=True : 다른 프로그램이 같은 포트를 못 열게 잠금 (motor_bridge 와 충돌 방지)
+        #   exclusive=True : 다른 프로그램이 같은 포트를 못 열게 잠금
         #   포트가 없거나 권한이 없으면 여기서 예외가 나고 노드가 죽습니다.
         #   → Pi 에서 사용자가 dialout 그룹이어야 /dev/ttyAMA0 을 열 수 있습니다.
         self.serial = serial.Serial(
@@ -169,26 +170,14 @@ class EncoderOdometry(Node):
         self.get_logger().info(
             f"엔코더 {self.cfg['port']} @ {self.cfg['baud']} baud, "
             f"필드 L={self.cfg['left_field']} R={self.cfg['right_field']}")
-        self._send(STREAM_ON)
+        self._send(STREAM_TOGGLE)  # 부팅 직후 스트림은 꺼져 있음. 이미 켜져 있었으면 OFF 응답 → 다시 켬
         # 시리얼을 블로킹으로 읽지 않고 짧은 주기로 비웁니다. 스레드가 없어야
         # 종료와 파라미터 처리가 단순하고, MCU 전송 주기에 맞춰 발행됩니다.
         # create_timer(주기초, 함수): 그 주기마다 함수를 자동 호출. rclpy.spin() 이 돌려줍니다.
-        # 20 ms: 텔레메트리가 50 ms마다 오므로 충분. 5 ms 타이머는 Pi 4 코어 하나의 43%를 썼음.
         self.create_timer(0.02, self.poll)                       # 20 ms 마다 시리얼 확인
-        self.create_timer(self.cfg['timeout'], self.check_link)  # 0.5 s 마다 끊김 확인
-        if self.cfg['drive']:
-            # 무장은 시작할 때 한 번, 그 뒤로는 이 서비스로만 합니다. 보드가 ABORT로
-            # 무장을 풀면 원인을 확인한 뒤 다시 부릅니다 (README 5절: 자동 재무장 금지).
-            #   ros2 service call /encoder_odom/arm std_srvs/srv/Trigger
-            self.want_arm = True
-            self.create_service(Trigger, '~/arm', self.on_arm)
-            # true: 잡기(8) + 운반 모드([PF0], 정면 PSD 정지 끔). false: 열기(7) + [PF1].
-            # 보드는 정지 상태에서만 집게 명령을 받습니다.
-            self.create_service(SetBool, '~/carry', self.on_carry)
-            self.cmd, self.cmd_stamp = (0.0, 0.0), None
-            self.create_subscription(Twist, self.cfg['cmd_vel_topic'], self.on_cmd_vel, 10)
-            # 20 Hz: 펌웨어는 마지막 속도 명령 뒤 0.3 s 가 지나면 정지·무장 해제합니다.
-            self.create_timer(0.05, self.send_drive)
+        self.create_timer(self.cfg['timeout'], self.check_link)  # timeout 마다 끊김 확인
+        # 미션 노드가 보드에 이동·집게 명령을 보내는 유일한 길입니다. 결과는 /base/event 로 돌아옵니다.
+        self.create_subscription(String, '/base/command', self.on_command, 10)
 
     # 밑줄(_)로 시작하는 이름 = "이 클래스 안에서만 쓰는 함수"라는 파이썬 관례
     def _require_measured_values(self):
@@ -221,6 +210,9 @@ class EncoderOdometry(Node):
         *lines, self.buffer = self.buffer.split(b'\n')
         # 카운터가 0으로 돌아간 묶음은 앞뒤 줄이 섞여 있어 통째로 버립니다(다음 줄이 새 기준).
         reset = [self.on_status(line.strip()) for line in lines if line.startswith(b'#')]
+        for line in lines:
+            if line.startswith(STREAM_REPLY) and b'OFF' in line:
+                self._send(STREAM_TOGGLE)  # 토글이 어긋나 꺼졌으면 다시 켬
         # 버퍼가 너무 커지면 앞(오래된 쪽)을 잘라냄. 뒤 MAX_BUFFER 바이트만 남김.
         del self.buffer[:-MAX_BUFFER]
         # 이번에 완성된 줄 중 최신 한 줄만 사용
@@ -251,7 +243,7 @@ class EncoderOdometry(Node):
         # 지난 표본 이후 흐른 시간(초). nanoseconds 는 정수 나노초라 1e9 로 나눔
         dt = (now - previous_stamp).nanoseconds / 1e9
         # 말도 안 되게 빨리 움직였으면 = 잡음으로 숫자가 깨진 줄 → 버림
-        #   허용 거리 = 최대속도(0.5 m/s) × 시간 (시간이 너무 짧으면 최소 0.1 s 로 봄)
+        #   허용 거리 = 최대속도(max_wheel_speed) × 시간 (시간이 너무 짧으면 최소 SAMPLE_PERIOD 로 봄)
         if max(abs(left), abs(right)) > self.cfg['max_wheel_speed'] * max(dt, SAMPLE_PERIOD):
             # 모터 잡음으로 숫자 중간 바이트가 빠진 줄(예: 1234 -> 124)도 형식은 맞아
             # 통과합니다. 적분하면 /odom과 TF가 한 표본 동안 튀고 SLAM이 그 순간을
@@ -312,68 +304,33 @@ class EncoderOdometry(Node):
         self.tf.sendTransform(transform)
 
     def on_status(self, line):
-        """보드 상태 줄로 무장 여부를 따라갑니다. 카운터가 0으로 돌아갔으면 True."""
+        """보드 상태 줄을 /base/event 로 넘깁니다. 카운터가 0으로 돌아갔으면 True."""
         self.events.publish(String(data=line.decode(errors='replace')))
-        if line.startswith(b'# ARMED'):
-            self.armed = True
-            self.get_logger().info('보드 무장됨: 속도 명령을 보냅니다.')
-        elif line.startswith((b'# ABORT', b'# REJECT', b'# STOP')):
-            if not line.startswith(b'# STOP'):
-                self.get_logger().warn(f'보드: {line.decode(errors="replace")}')
-            # README 5절: 거절은 상태가 불확실하다는 뜻이라 q로 확실히 세웁니다.
-            if line.startswith(b'# REJECT') and self.cfg['drive']:
+        if line.startswith((b'# ABORT', b'# REJECT')):
+            self.get_logger().warn(f'보드: {line.decode(errors="replace")}')
+            # 거절은 상태가 불확실하다는 뜻이라 q로 확실히 세웁니다 (정지 중이면 무해).
+            if line.startswith(b'# REJECT'):
                 self._send(b'q')
-            self.want_arm = False  # 남은 요청이 자동 재무장이 되지 않게
-            if self.armed:
-                self.armed = False
-                self.get_logger().error(
-                    '보드 무장 해제됨. 원인을 확인한 뒤 '
-                    'ros2 service call /encoder_odom/arm std_srvs/srv/Trigger')
         if not line.startswith(COUNTER_RESET):
             return False
         self.get_logger().warn(f'보드 카운터 초기화: {line.decode(errors="replace")}. 기준점을 다시 잡습니다.')
-        self.ticks, self.armed, self.want_arm = None, False, False
-        self._send(STREAM_ON)  # 부팅 직후 스트림은 꺼져 있음
+        self.ticks = None
+        if line.startswith(b'# ROBOT40_V4 READY'):
+            self._send(STREAM_TOGGLE)  # 부팅 직후 스트림은 꺼져 있음
         return True
 
-    def on_arm(self, request, response):
-        response.success = self.armed  # true = 이미 무장됨. false면 요청을 걸고 # ARMED 를 기다림
-        if self.armed:
-            response.message = '이미 무장됨.'
-        else:
-            self.want_arm = True
-            response.message = '[ARM] 요청. 결과(# ARMED / # REJECT)는 encoder_odom 로그에 나옵니다.'
-        return response
-
-    def on_carry(self, request, response):
-        self._send(b'8[PF0]\n' if request.data else b'7[PF1]\n')
-        response.success = True
-        response.message = '결과(# FRONT_PSD_*, 서보각)는 /base/event, /base/telemetry 에 나옵니다.'
-        return response
+    def on_command(self, msg):
+        data = board_command(msg.data)
+        if data is None:
+            self.get_logger().error(f'허용되지 않은 보드 명령 {msg.data!r}: 버림')
+            return
+        self._send(data)
 
     def _send(self, data):
         try:
             self.serial.write(data)
         except (serial.SerialException, OSError) as e:
             self.get_logger().error(f'보드 전송 실패 {data!r}: {e}')
-
-    def on_cmd_vel(self, msg):
-        self.cmd = (msg.linear.x, msg.angular.z)
-        self.cmd_stamp = self.get_clock().now()
-
-    def send_drive(self):
-        """Latest cmd_vel, or zero once it is older than cmd_timeout (README 5절 250 ms)."""
-        if not self.armed:
-            # 보드가 살아 있을 때(CSV 수신) 한 번만 요청합니다. 무장 전 속도 명령은 거절됩니다.
-            if self.want_arm and self.heard is not None:
-                self.want_arm = False
-                self._send(b'[ARM]\n')
-            return
-        linear, angular = self.cmd
-        if self.cmd_stamp is None or (
-                self.get_clock().now() - self.cmd_stamp).nanoseconds / 1e9 > self.cfg['cmd_timeout']:
-            linear = angular = 0.0
-        self._send(drive_frame(linear, angular))
 
     def check_link(self):
         """틱이 끊기거나 처음부터 오지 않으면 알립니다. 자세를 추정하지는 않습니다.
@@ -382,7 +339,7 @@ class EncoderOdometry(Node):
         /odom만 나오지 않습니다. SLAM은 TF가 없어 지도를 못 만드는데 원인이 보이지
         않으므로, 한 번도 수신하지 못한 경우도 같은 오류로 알립니다.
         """
-        # 받은 적 있음 → 마지막 수신 시각부터 0.5 s 기준
+        # 받은 적 있음 → 마지막 수신 시각부터 timeout 기준
         # 받은 적 없음 → 노드 시작 시각부터 3 s 기준 (Nucleo 부팅 여유)
         if self.heard is not None:
             since, limit = self.heard, self.cfg['timeout']
@@ -391,10 +348,9 @@ class EncoderOdometry(Node):
         # 아직 기준 시간 안이면 정상
         if (self.get_clock().now() - since).nanoseconds / 1e9 <= limit:
             return
-        self._send(STREAM_ON)  # 재부팅·[N0] 뒤 꺼진 스트림을 다시 켬
-        if self.armed:  # README 5절: CSV가 0.5 s 끊기면 q로 세우고 연동 이상으로 처리
-            self._send(b'q')
-            self.armed = False
+        # CSV가 끊기면 q로 세웁니다(이동 중 자세를 모름). 스트림 토글은 건드리지 않습니다:
+        # 링크만 끊긴 것이면 't'가 스트림을 꺼 버립니다. 부팅이면 READY 줄에서 다시 켭니다.
+        self._send(b'q')
         # 이미 경고했으면 또 하지 않음 (로그 도배 방지)
         if self.warned:
             return
@@ -419,8 +375,7 @@ def main():
     except (KeyboardInterrupt, ExternalShutdownException):  # Ctrl+C 는 정상 종료로 취급
         pass
     finally:                   # 에러가 나든 안 나든 항상 실행되는 정리 구간
-        if node.cfg['drive']:
-            node.serial.write(b'q')  # 종료 시 즉시 정지·무장 해제 (명령 만료 0.3 s 를 기다리지 않음)
+        node.serial.write(b'q')  # 종료 시 즉시 정지 (보드는 하트비트가 없어 이것 없이는 진행 중 명령을 끝까지 감)
         node.serial.close()    # 포트 닫기 (잠금 해제 → 다른 노드가 열 수 있게)
         node.destroy_node()
         rclpy.try_shutdown()   # ROS 2 통신 종료

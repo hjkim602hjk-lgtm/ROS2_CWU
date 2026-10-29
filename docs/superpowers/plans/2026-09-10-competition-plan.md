@@ -10,7 +10,7 @@ tags:
 
 **갱신일:** 2026-09-16
 **상태:** codex 초안 — Claude 검토 및 실물 검증 대기
-**근거:** `Agent.md`, `docs/competition_rules.md`, `README.md`
+**근거:** `AGENTS.md`, `docs/competition_rules.md`, `README.md`
 **선행 산출물:** `docs/superpowers/plans/2026-09-08-slam.md` (cwu_slam 완료)
 
 > [!info] 계획과 현재 상태 구분
@@ -257,7 +257,7 @@ python3 src/cwu_slam/test/run_demo_check.py
 ROS_DOMAIN_ID=68 python3 src/cwu_base/test/run_encoder_check.py
 ```
 
-모든 단계는 하드웨어 없이 통과하는 로직 테스트를 남깁니다 (`Agent.md`: "Never assume hardware is available").
+모든 단계는 하드웨어 없이 통과하는 로직 테스트를 남깁니다 (`AGENTS.md`: "Never assume hardware is available").
 
 2026-09-13 개발 PC 재검증: 전체 4개 패키지 빌드, 단위 테스트 29개, SLAM Toolbox
 가상 지도 생성·저장, 가상 시리얼 `/odom` 0.990 m와 TF 일치 검사가 통과했습니다.
@@ -312,7 +312,7 @@ Cartographer: `/tmp/cwu-cartographer-check-7pkry9r6` (84×84 지도).
 **변경 파일:**
 
 - `README.md`: 센서 구성·미션 목표·PSD 자동 파지 상태 안내.
-- `Agent.md`: 확정 파지 방식과 미측정값 추측 금지 원칙. `AGENTS.md`는 이 파일의 심볼릭 링크이므로 함께 반영됩니다.
+- `AGENTS.md`: 확정 파지 방식과 미측정값 추측 금지 원칙. (당시 `AGENTS.md`는 이 파일의 심볼릭 링크였음)됩니다.
 - `docs/superpowers/plans/2026-09-10-competition-plan.md`: PSD 미확정 사양, 인지·파지·양 미션·검증·의존성 계획.
 - `docs/superpowers/specs/2026-09-16-psd-gripper-design.md`: 자동 파지 설계 초안 신규 작성.
 - `docs/프로젝트 목차.md`: PSD 설계 링크와 탐색 안내.

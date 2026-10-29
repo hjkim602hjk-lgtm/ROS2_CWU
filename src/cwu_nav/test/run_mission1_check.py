@@ -1,11 +1,11 @@
-# 로봇 없이 mission1 상태머신의 전체 흐름을 검증하는 스크립트입니다.
-# 가짜 보드(텔레메트리·이벤트·arm/carry 서비스), 가짜 Nav2(바로 성공하는 액션 서버),
-# 고정 TF를 붙이고 탐색 → 막다른 곳(라이다) 되돌기 → 몸체 닿은 채 정지 탈출(/cmd_vel_safe 후진) → 측면 PSD 후퇴 → 접근 → 몸통 옆 장애물(라이다) 후퇴
-# (비켜 가기 회전, 고정 TF라 못 돌면 후퇴) → 재접근 → 정면 PSD 파지
-# → 출발점 복귀 → 종료를 확인합니다.
-# 순수 판단은 test_mission_logic.py가 보고, 여기서는 상태 전이와 토픽·서비스·액션 연결을 봅니다.
+# 로봇 없이 mission1 상태머신의 전체 흐름을 검증하는 스크립트입니다 (2026-10-29 펌웨어 규약).
+# 가짜 보드: /base/command의 [F…]/[TL…]/[TR…]를 받으면 MOVE_S 뒤 map → base_link TF를 그만큼 옮기고 # DONE을,
+# 그 전에 q가 오면 움직이지 않고 # STOP을 돌려줍니다 (보드는 PSD로 멈추지 않음). 7/8은 서보 각도만 바꿉니다.
+# 흐름: 집게 열기 → 첫 둘러보기(반시계 90°) → 힌트 칸으로 격자 이동(정면 PSD → mission이 q → 그 칸 막힘 → 돌아감)
+# → 목표물 보임 → 접근(오른쪽 오차 → TR, 중앙 → F100) → 정면 PSD → q = 파지(8) → 출발 칸 복귀 → 종료.
+# 순수 판단은 test_grid.py·test_mission_logic.py가 보고, 여기서는 상태 전이와 토픽 연결을 봅니다.
 
-"""Drive the mission1 node through a full fake mission and check each hand-off."""
+"""Drive the mission1 node through a full fake mission on discrete board moves."""
 import math
 import os
 from pathlib import Path
@@ -16,164 +16,122 @@ import time
 
 import rclpy
 from ament_index_python.packages import get_package_share_directory
-from geometry_msgs.msg import PointStamped, TransformStamped, Twist
-from nav2_msgs.action import NavigateToPose
-from rclpy.action import ActionServer
+from geometry_msgs.msg import PointStamped, TransformStamped
 from rclpy.node import Node
-from rclpy.task import Future
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Int32MultiArray, String
-from std_srvs.srv import SetBool, Trigger
-from tf2_ros import StaticTransformBroadcaster
+from tf2_ros import TransformBroadcaster
+
+MOVE_S = 0.4  # 가짜 이동 하나가 걸리는 시간 (그 사이에 mission이 q로 세울 수 있게)
 
 
-class FakeRobot(Node):
+class FakeBoard(Node):
     def __init__(self):
         super().__init__('mission1_check')
+        self.x = self.y = self.yaw = 0.0
         self.psd = [0, 0, 0, 0]          # 앞, 뒤, 좌, 우 raw
-        self.servo = [105, 75]           # 지난 실행이 닫힌 채 끝남 (실물 2회차)
-        self.carries, self.goals, self.cmd, self.safe_cmd = [], [], None, None
-        self.open_at = self.first_cmd_servo = self.scan_points = self.hold = None
-        transform = TransformStamped()
-        transform.header.frame_id, transform.child_frame_id = 'map', 'base_link'
-        transform.transform.rotation.w = 1.0
-        self.tf = StaticTransformBroadcaster(self)
-        self.tf.sendTransform(transform)
+        self.servo = [99, 78]            # 지난 실행이 닫힌 채 끝남 (실물 2회차)
+        self.commands, self.pending, self.first_move_servo, self.bearing_x = [], None, None, None
+        self.tf = TransformBroadcaster(self)
         self.telemetry = self.create_publisher(Int32MultiArray, '/base/telemetry', 10)
         self.event = self.create_publisher(String, '/base/event', 10)
         self.bearing = self.create_publisher(PointStamped, '/target/bearing', 10)
         self.scan = self.create_publisher(LaserScan, '/scan', 10)
-        self.create_subscription(Twist, '/cmd_vel', self.on_cmd, 10)
-        # 막힘 탈출은 collision monitor를 건너 출력 토픽에 직접 씀
-        self.create_subscription(Twist, '/cmd_vel_safe',
-                                 lambda m: setattr(self, 'safe_cmd', (m.linear.x, m.angular.z)), 10)
-        self.create_service(Trigger, '/encoder_odom/arm', self.on_arm)
-        self.create_service(SetBool, '/encoder_odom/carry', self.on_carry)
-        self.server = ActionServer(self, NavigateToPose, 'navigate_to_pose', self.on_goal)
-        self.create_timer(0.05, self.send_telemetry)
+        self.create_subscription(String, '/base/command', self.on_command, 10)
+        self.create_timer(0.05, self.publish)
 
-    def send_telemetry(self):
-        if self.open_at is not None and time.monotonic() >= self.open_at:
-            self.servo, self.open_at = [40, 140], None  # 서보는 1도/30 ms라 열리는 데 시간이 걸림
+    def publish(self):
+        if self.pending is not None and time.monotonic() >= self.pending[1]:
+            self.finish(self.pending[0])
+            self.pending = None
+        transform = TransformStamped()
+        transform.header.stamp = self.get_clock().now().to_msg()
+        transform.header.frame_id, transform.child_frame_id = 'map', 'base_link'
+        transform.transform.translation.x, transform.transform.translation.y = self.x, self.y
+        transform.transform.rotation.z = math.sin(self.yaw / 2)
+        transform.transform.rotation.w = math.cos(self.yaw / 2)
+        self.tf.sendTransform(transform)
         self.telemetry.publish(Int32MultiArray(data=[0, 0, 0, 0, 0, 0] + self.psd + self.servo))
-        if self.scan_points is not None:  # 로봇 좌표 (x, y) 점들, 나머지 광선은 무효 0.0
-            scan = LaserScan()
-            scan.header.frame_id = 'base_link'
-            scan.angle_increment, scan.range_min, scan.range_max = math.radians(1.0), 0.12, 12.0
-            scan.ranges = [0.0] * 360
-            for x, y in self.scan_points:
-                scan.ranges[round(math.degrees(math.atan2(y, x))) % 360] = math.hypot(x, y)
-            self.scan.publish(scan)
+        scan = LaserScan()
+        scan.header.frame_id = 'base_link'
+        scan.angle_increment, scan.range_min, scan.range_max = math.radians(1.0), 0.12, 12.0
+        scan.ranges = [0.0] * 360  # 사방이 트임 (무효 = 먼 곳)
+        self.scan.publish(scan)
+        if self.bearing_x is not None:
+            msg = PointStamped()
+            msg.point.x, msg.point.z = self.bearing_x, 1.0
+            self.bearing.publish(msg)
 
-    def on_cmd(self, msg):
-        self.cmd = (msg.linear.x, msg.angular.z)
-        if self.first_cmd_servo is None:
-            self.first_cmd_servo = list(self.servo)
-
-    def on_arm(self, request, response):
-        response.success = True
-        return response
-
-    def on_carry(self, request, response):
-        self.carries.append(request.data)
-        if request.data:
+    def on_command(self, msg):
+        text = msg.data
+        self.commands.append(text)
+        if text == '7':
+            self.servo = [40, 140]
+        elif text == '8':
             self.servo = [99, 78]
-        else:
-            self.open_at = time.monotonic() + 1.0
-        response.success = True
-        return response
+        elif text == 'q':
+            self.pending = None
+            self.event.publish(String(data='# STOP'))
+        elif text[0] in 'FT':
+            if self.first_move_servo is None:
+                self.first_move_servo = list(self.servo)
+            self.pending = (text, time.monotonic() + MOVE_S)
 
-    async def on_goal(self, handle):
-        p = handle.request.pose.pose.position
-        self.goals.append((round(p.x, 3), round(p.y, 3)))
-        if self.hold is not None and len(self.goals) >= 2:
-            await self.hold  # 끝나지 않고 진행 중인 목표 (막다른 곳 검사)
-            handle.abort()
-            return NavigateToPose.Result()
-        if len(self.goals) == 1:
-            handle.abort()  # 첫 목표: 장애물 모서리에 붙어 RPP가 거부 (모의 경기장 1·4회차)
+    def finish(self, text):
+        if text[0] == 'F':
+            d = int(text[1:]) / 1000
+            self.x, self.y = self.x + d * math.cos(self.yaw), self.y + d * math.sin(self.yaw)
+            self.event.publish(String(data='# DONE DISTANCE'))
         else:
-            handle.succeed()
-        return NavigateToPose.Result()
+            self.yaw += math.radians(int(text[2:])) * (1 if text[1] == 'L' else -1)
+            self.event.publish(String(data='# DONE TURN_LEFT' if text[1] == 'L' else '# DONE TURN_RIGHT'))
 
-    def wait(self, what, condition, seconds, see=False):
+    def moves(self):
+        return [c for c in self.commands if c[0] in 'FT']
+
+    def wait(self, what, condition, seconds):
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
-            if see:
-                msg = PointStamped()
-                msg.point.z = 1.0  # 화면 정중앙
-                self.bearing.publish(msg)
             rclpy.spin_once(self, timeout_sec=0.05)
             if condition():
                 print('PASS: ' + what, flush=True)
                 return
-        raise AssertionError('시간 초과: ' + what)
+        raise AssertionError('시간 초과: ' + what + ' (명령 %s)' % self.commands[-12:])
 
 
 def verify():
     rclpy.init()
-    robot = FakeRobot()
+    board = FakeBoard()
     try:
-        robot.wait('INIT: 집게 열기·정면 PSD 켜기 요청', lambda: robot.carries == [False], 15)
-        robot.wait('SPIN: 제자리 회전 명령', lambda: robot.cmd and robot.cmd[1] != 0, 5)
-        assert robot.first_cmd_servo == [40, 140], '집게가 다 열리기 전에 움직였습니다: %s' % robot.first_cmd_servo
-        print('PASS: 첫 주행 명령은 집게가 다 열린 뒤', flush=True)
-        robot.wait('GOTO: 첫 목표 = 중앙 힌트 앞 (1.176, 1.176)',
-                   lambda: robot.goals[:1] == [(1.176, 1.176)], 15)
-        robot.hold = Future()
-        robot.wait('Nav2 실패 → 다음 목표', lambda: len(robot.goals) >= 2, 20)
-        # 탐색 중 앞·좌·우 0.2 m 벽, 뒤는 트임: 목표를 버리고 돌아서 다른 목표
-        wall = [k / 200 for k in range(-40, 41)]  # 5 mm 간격: 1도 광선마다 벽이 찍히게
-        robot.scan_points = [(0.2, y) for y in wall] + [(x, s * 0.2) for x in wall for s in (1, -1)]
-        robot.wait('GOTO 중 막다른 곳 → 그 목표를 버리고 돌아서 다음 목표', lambda: len(robot.goals) >= 3, 20)
-        # Nav2 주행 중 앞 오른쪽이 몸체에 닿은 채 멈춤 (18·19회차): 고정 TF라 안 움직이므로 stuck_s 뒤 탈출
-        robot.scan_points = [(0.10, -0.13), (0.11, -0.12), (0.12, -0.11)]
-        robot.wait('GOTO 중 몸체 닿은 채 정지 → collision monitor 건너 후진',
-                   lambda: robot.safe_cmd and robot.safe_cmd[0] < 0, 10)
-        assert not (robot.cmd and robot.cmd[0] < 0), '탈출 후진이 collision monitor 입력(/cmd_vel)으로 갔습니다'
-        robot.scan_points = []
-        robot.wait('탈출 뒤 같은 목표로 GOTO 재개', lambda: len(robot.goals) >= 4 and robot.goals[3] == robot.goals[2], 10)
-        robot.hold.set_result(True)
-        robot.hold = None
-        robot.wait('도착 뒤 다시 SPIN', lambda: robot.cmd and robot.cmd[1] != 0, 5)
+        board.wait('RELEASE: 집게 열기', lambda: board.commands[:1] == ['7'], 15)
+        board.wait('LOOK: 첫 둘러보기 = 반시계 45° 두 번', lambda: board.moves()[:2] == ['TL45', 'TL45'], 10)
+        assert board.first_move_servo == [40, 140], '집게가 다 열리기 전에 움직였습니다: %s' % board.first_move_servo
+        print('PASS: 첫 이동은 집게가 다 열린 뒤', flush=True)
+        # 힌트 칸 (4,4) 쪽으로: 지금 +y를 봄 → 첫 직진은 (0,1) 칸
+        board.wait('GOTO: 힌트 쪽 첫 직진 F400', lambda: board.pending and board.pending[0] == 'F400'
+                   and board.moves()[2:].count('F400') == 1, 10)
+        n = len(board.moves())
+        board.psd[0] = 600  # 낮은 장애물 앞 (탐색 중이라 파지 아님): 보드는 안 멈춤 → mission이 q
+        board.wait('직진 중 정면 PSD → mission이 q로 정지', lambda: board.commands[-1] == 'q', 5)
+        board.psd[0] = 0
+        board.wait('막힌 칸을 피해 회전부터 (다른 칸으로 돌아감)',
+                   lambda: len(board.moves()) > n and board.moves()[n][0] == 'T', 10)
+        board.wait('힌트 옆 칸 도착 → 둘러보기', lambda: abs(board.x - 1.6) + abs(board.y - 1.6) <= 0.41
+                   and board.moves()[-1].startswith('T'), 40)
 
-        robot.psd[3] = 600  # 오른쪽 벽: 보드가 회전 중 멈춤
-        robot.event.publish(String(data='# ABORT PSD_BLOCKED'))
-        robot.wait('BACKOFF: 측면 막힘 → 후진', lambda: robot.cmd and robot.cmd[0] < 0, 5)
-        robot.psd[3] = 0
-        robot.wait('후퇴 뒤 SPIN 재개', lambda: robot.cmd and robot.cmd[1] != 0, 5)
-
-        robot.wait('APPROACH: 중앙에 보이면 직진',
-                   lambda: robot.cmd and robot.cmd[0] > 0 and robot.cmd[1] == 0, 5, see=True)
-        # 몸통 왼쪽 앞 옆에 장애물: 큐브를 보고 있어도 밀지 않고 뒤로 뺌 (실물 11회차)
-        robot.scan_points = [(x, 0.155) for x in (0.02, 0.05, 0.08, 0.11)]
-        robot.wait('APPROACH: 몸통 왼쪽 옆 장애물(라이다) → 직진 멈추고 오른쪽으로 비켜 가기 회전',
-                   lambda: robot.cmd and robot.cmd[0] == 0 and robot.cmd[1] < 0, 5, see=True)
-        robot.wait('고정 TF라 회전이 안 되면 비켜 가기 포기 → 후진',
-                   lambda: robot.cmd and robot.cmd[0] < 0, 5, see=True)
-        robot.scan_points = []
-        robot.wait('장애물 사라진 뒤 다시 접근 직진',
-                   lambda: robot.cmd and robot.cmd[0] > 0 and robot.cmd[1] == 0, 15, see=True)
-        robot.psd[0] = 300  # 큐브가 집게 앞: 화면 아래로 잘려 검출이 끊겨도
-        end, turned = time.monotonic() + 1.5, False
+        board.bearing_x = math.tan(math.radians(17))  # 오른쪽 17°
+        board.wait('APPROACH: 오른쪽 오차 → 시계 회전 TR17', lambda: 'TR17' in board.moves(), 15)
+        board.bearing_x = 0.0
+        board.wait('APPROACH: 중앙 → F100 직진', lambda: board.pending and board.pending[0] == 'F100', 10)
+        board.psd[0] = 600  # 큐브가 정면 PSD 임계에 들어옴 → mission이 q
+        board.wait('GRASP: q로 정지 → 잡기', lambda: board.commands[-2:] == ['q', '8'], 10)
+        board.bearing_x, board.psd[0] = None, 615  # 쥔 큐브가 정면 PSD 앞
+        board.wait('RETURN: 출발 칸 (0,0) 도착', lambda: math.hypot(board.x, board.y) < 0.1, 60)
+        end = time.monotonic() + 2.0
         while time.monotonic() < end:
-            rclpy.spin_once(robot, timeout_sec=0.02)
-            turned |= bool(robot.cmd and robot.cmd[1] != 0)
-        assert robot.cmd and robot.cmd[0] > 0 and not turned, 'PSD 직진 단계에서 회전했습니다: %s' % (robot.cmd,)
-        print('PASS: 정면 PSD 근접 → 카메라 없이 직진', flush=True)
-        robot.psd[0] = 600  # 큐브가 정면 PSD 임계에 들어옴 → 보드 정지
-        end = time.monotonic() + 0.2
-        while time.monotonic() < end:
-            rclpy.spin_once(robot, timeout_sec=0.02)
-        robot.psd[0] = 540  # 잡음: 정지 직후 줄은 임계 아래일 수 있음 (실물 1회차 32 s)
-        robot.event.publish(String(data='# ABORT PSD_BLOCKED'))
-        robot.wait('GRASP: 잡기 + 운반 모드 요청', lambda: robot.carries[-1:] == [True], 5)
-        robot.wait('RETURN: 출발점 (0, 0)으로 복귀 목표', lambda: robot.goals[-1:] == [(0.0, 0.0)], 10)
-        end = time.monotonic() + 2.0  # 복귀 결과가 mission1에 전달될 때까지 계속 돌림
-        while time.monotonic() < end:
-            rclpy.spin_once(robot, timeout_sec=0.05)
+            rclpy.spin_once(board, timeout_sec=0.05)
     finally:
-        robot.destroy_node()
+        board.destroy_node()
         rclpy.shutdown()
 
 
@@ -187,10 +145,10 @@ def main():
     params = Path(get_package_share_directory('cwu_nav')) / 'config' / 'mission1.yaml'
     print('Check artifacts: %s' % directory, flush=True)
     with logfile.open('w') as output:
-        # 고정 TF라 실제로 돌지 않으므로, 회전 시간 제한(2·2π/spin_speed + 5 s)을 줄이려고 빠르게
+        # 가짜 보드는 바로 답하므로 자세 대기를 줄여 검사를 빠르게
         node = subprocess.Popen(
             ['ros2', 'run', 'cwu_nav', 'mission1', '--ros-args', '--params-file', str(params),
-             '-p', 'spin_speed:=20.0'],
+             '-p', 'settle_s:=0.2'],
             env=env, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
         try:
             verify()

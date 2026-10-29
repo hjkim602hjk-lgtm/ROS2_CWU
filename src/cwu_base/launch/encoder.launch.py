@@ -34,10 +34,6 @@ def generate_launch_description():
         DeclareLaunchArgument('encoder_port', default_value='/dev/ttyAMA0'),
         # 시뮬레이션(가짜 시계)으로 돌릴 때만 true
         DeclareLaunchArgument('use_sim_time', default_value='false'),
-        # true면 /cmd_vel로 모터를 움직입니다 (BASE_NAV_V1). 기본은 읽기 전용.
-        DeclareLaunchArgument('drive', default_value='false'),
-        # Nav2를 쓰면 cmd_vel_safe (collision monitor 출력)
-        DeclareLaunchArgument('cmd_vel_topic', default_value='cmd_vel'),
         # 노드 하나 띄우기
         #   package    : 어느 패키지의
         #   executable : setup.py 에 등록한 실행 이름 (encoder_odom → encoder_odom.py 의 main)
@@ -51,8 +47,5 @@ def generate_launch_description():
                                         value_type=str),
                  'use_sim_time': ParameterValue(LaunchConfiguration('use_sim_time'),
                                                 value_type=bool),
-                 'drive': ParameterValue(LaunchConfiguration('drive'), value_type=bool),
-                 'cmd_vel_topic': ParameterValue(LaunchConfiguration('cmd_vel_topic'),
-                                                 value_type=str),
              }], output='screen'),  # 노드 로그를 터미널에 바로 출력
     ])

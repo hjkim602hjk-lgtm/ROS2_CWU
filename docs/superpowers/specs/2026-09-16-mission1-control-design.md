@@ -12,7 +12,7 @@ tags:
 
 **갱신일:** 2026-09-16
 **상태:** Claude 작성. Nav2 경로와 시각 서보는 가상 입력으로 검증했고, D415는 **실물 카메라 미검증**입니다.
-**근거:** `README.md`의 미션1 작동 방식, `Agent.md`, `docs/competition_rules.md`
+**근거:** `README.md`의 미션1 작동 방식, `AGENTS.md`, `docs/competition_rules.md`
 **이번에 추가한 코드:** `src/cwu_nav`, `src/cwu_perception`, `cwu_slam`의 장착 TF·데모 변경
 
 > [!important] 카메라 역할 변경 (2026-09-16, 사용자 확정)
@@ -385,7 +385,7 @@ Nav2 컴포지션의 알려진 종료 경합입니다.
 
 ## 관련 문서
 
-- [[Agent|개발 원칙]]
+- [[AGENTS|개발 원칙]]
 - [[README|빌드 및 실행 절차]]
 - [[docs/competition_rules|대회 규정]]
 - [[docs/superpowers/plans/2026-09-10-competition-plan|대회 개발 계획]]

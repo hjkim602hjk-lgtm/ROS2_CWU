@@ -1,5 +1,7 @@
 // NUCLEO-F446RE / STM32duino 3.x
 // Straight driving + gripper + PSD + encoder-based turns.
+// 2026-10-29 Pi mission 1 changes: no heartbeat, no front PSD stop (the Pi watches the
+// telemetry and sends q), 20 Hz telemetry, grip 99/78.
 
 #include <Arduino.h>
 #include <Servo.h>
@@ -41,8 +43,10 @@ constexpr int RIGHT_ENCODER_SIGN = -1;
 // ---------- Gripper ----------
 constexpr int OPEN_LEFT = 40;
 constexpr int OPEN_RIGHT = 140;
-constexpr int GRIP_LEFT = 105;
-constexpr int GRIP_RIGHT = 75;
+// 105/75 held the cube but the right servo hunted (opened/closed by itself) -> 3 deg looser
+// each (2026-10-14); left still acted up at 102 -> left 3 deg looser again (2026-10-15).
+constexpr int GRIP_LEFT = 99;
+constexpr int GRIP_RIGHT = 78;
 
 Servo servoLeft, servoRight;
 int angleL = OPEN_LEFT, angleR = OPEN_RIGHT;
@@ -80,10 +84,9 @@ constexpr float DISTANCE_SCALE_CORRECTION = 740.0f / 770.0f;
 float countsPerMmL = (5687.0f / 1460.0f) * (40.0f / 26.0f) * DISTANCE_SCALE_CORRECTION;
 float countsPerMmR = (5600.0f / 1460.0f) * (40.0f / 26.0f) * DISTANCE_SCALE_CORRECTION;
 
-constexpr uint32_t TELEMETRY_MS = 200;
+constexpr uint32_t TELEMETRY_MS = 50; // the Pi stops on the front PSD from this stream
 constexpr uint32_t MOTOR_TEST_MS = 10000;
 constexpr uint32_t MOTION_TIMEOUT_MS = 15000;
-constexpr uint32_t HEARTBEAT_TIMEOUT_MS = 700;
 constexpr uint32_t ENCODER_TIMEOUT_MS = 350;
 constexpr uint32_t ENCODER_STARTUP_TIMEOUT_MS = 1500;
 constexpr float ENCODER_STARTUP_TRAVEL_MM = 1.0f;
@@ -146,9 +149,6 @@ uint32_t telemetryTime = 0;
 uint32_t motionTime = 0, pulseTimeL = 0, pulseTimeR = 0;
 bool encoderPulseSeenL = false, encoderPulseSeenR = false;
 bool encoderMotionEstablishedL = false, encoderMotionEstablishedR = false;
-uint32_t heartbeatTime[2] = {0, 0};
-bool heartbeatSeen[2] = {false, false};
-uint8_t motionOwner = 0;
 
 int wrongCycles = 0;
 
@@ -375,13 +375,6 @@ void updateServos() {
   }
 }
 
-// Pi commands require a heartbeat.
-// Continuous modes require one from either command source.
-bool needsHeartbeat() {
-  return (mode != MODE_STOP && motionOwner == 0) ||
-         mode == MODE_PID_CONTINUOUS || mode == MODE_AUTO_PSD;
-}
-
 bool startMode(RunMode next, uint8_t source) {
   if (mode != MODE_STOP || settling || calibrating || servoBusy()) {
     say("# REJECT BUSY");
@@ -403,17 +396,7 @@ bool startMode(RunMode next, uint8_t source) {
     return false;
   }
 
-  if (source == 0 || next == MODE_PID_CONTINUOUS ||
-      next == MODE_AUTO_PSD) {
-    if (!heartbeatSeen[source] ||
-        millis() - heartbeatTime[source] > HEARTBEAT_TIMEOUT_MS) {
-      say("# REJECT HEARTBEAT_REQUIRED");
-      return false;
-    }
-  }
-
   stopMotors();
-  motionOwner = source;
   snapshot(startL, startR);
   watchedL = startL;
   watchedR = startR;
@@ -600,6 +583,7 @@ void checkStall() {
 }
 
 // ---------- PSD ----------
+// Single-wheel bench tests sweep the body sideways, so they keep the four-way check.
 bool pivotBlocked() {
   return analogRead(PSD_FRONT) >= PSD_THRESHOLD ||
          analogRead(PSD_REAR) >= PSD_THRESHOLD ||
@@ -873,12 +857,6 @@ void frameCommand(char *s, uint8_t source) {
 void command(char c, uint8_t source) {
   if (c == '\r' || c == '\n') return;
 
-  if (c == '!') {
-    heartbeatSeen[source] = true;
-    heartbeatTime[source] = millis();
-    return;
-  }
-
   if (c == 'q' || c == ' ') {
     calibrating = false;
     halt("# STOP");
@@ -1011,12 +989,12 @@ void help(Stream &out) {
   out.println("# f: 1000mm; [F400]: 400mm; [F1000]: 1000mm");
   out.println("# [TL90]/[TR90]: left/right encoder-based 90deg");
   out.println("# [TL45]/[TR45]: 45deg; range 10..180deg");
-  out.println("# Pi motion: ! every 200ms; timeout 700ms");
+  out.println("# no heartbeat, no front PSD stop: the Pi sends q");
   out.println("# USB finite motion: bounded, disconnect not detected");
   out.println("# [ML]/[MR]/b/p: left/right/both/PID 10 sec");
   out.println("# P/[AUTO]: max 10 sec");
   out.println("# q/space: STOP; z: STOP+zero");
-  out.println("# 7/c: OPEN 40/140; 8: GRIP 105/75");
+  out.println("# 7/c: OPEN 40/140; 8: GRIP 99/78");
   out.println("# a/d,A/D: left -/+1,5; j/l,J/L: right -/+1,5");
   out.println("# [L105]/[R075]: servo absolute");
   out.println("# [Kleft,right]: counts/mm; RAM override");
@@ -1081,22 +1059,15 @@ void loop() {
   }
 
   if (mode != MODE_STOP) {
-    if (needsHeartbeat() &&
-        now - heartbeatTime[motionOwner] > HEARTBEAT_TIMEOUT_MS) {
-      halt("# ABORT HEARTBEAT_TIMEOUT");
-    } else if (positioned() &&
+    if (positioned() &&
                now - motionTime >= MOTION_TIMEOUT_MS) {
       halt("# ABORT MOTION_TIMEOUT");
     } else if ((mode == MODE_PID_CONTINUOUS ||
                 mode == MODE_AUTO_PSD) &&
                now - motionTime >= MOTOR_TEST_MS) {
       halt("# ABORT TEST_TIME_LIMIT");
-    } else if ((turning() || mode == MODE_LEFT_TEST ||
-                mode == MODE_RIGHT_TEST) && pivotBlocked()) {
+    } else if ((mode == MODE_LEFT_TEST || mode == MODE_RIGHT_TEST) && pivotBlocked()) {
       halt("# ABORT PSD_PIVOT");
-    } else if (mode != MODE_AUTO_PSD &&
-               analogRead(PSD_FRONT) >= PSD_THRESHOLD) {
-      halt("# ABORT PSD_FRONT");
     }
   }
 

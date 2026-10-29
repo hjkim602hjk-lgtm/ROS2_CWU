@@ -12,8 +12,9 @@
 #     제자리 360도 회전 후 yaw가 제자리로 돌아오는지 봅니다. 직진 오차는
 #     counts_per_mm, 회전 오차는 wheel_separation으로 보정합니다.
 
-# 2026-10-14부터 보드 펌웨어는 RobotIntegrated.ino (BASE_NAV_V1, 규약 README_STM_PI_INTERFACE.md).
-# 노드가 [N1]을 보내 받는 20 Hz CSV: ms,mode,L,R,PWM_L,PWM_R,PSD_FRONT,PSD_REAR,PSD_LEFT,PSD_RIGHT,SERVO_L,SERVO_R
+# 2026-10-29부터 보드 펌웨어는 새 RobotIntegrated.ino + MotorControl.h (규약 README_STM_PI_INTERFACE.md).
+# 노드가 't'로 켜는 20 Hz CSV: ms,mode,L,R,PWM_L,PWM_R,PSD_FRONT,PSD_REAR,PSD_LEFT,PSD_RIGHT,SERVO_L,SERVO_R
+# L·R은 X4 카운트 ÷ 4 (예전 A상 상승 단위 유지). 이동 명령은 /base/command → [F400]·[TL90] 등.
 
 encoder_odom:
   ros__parameters:
@@ -24,24 +25,24 @@ encoder_odom:
     # 예) "ENC,1499,1406" 이면 left_field: 0, right_field: 1.
     left_field: 2
     right_field: 3
-    # BASE_NAV_V1: 앞으로 가면 좌우 틱이 모두 늘어납니다 (V3 대비 펌웨어 ENCODER_SIGN 둘 다 반전,
-    # README 6절). V3는 둘 다 줄었음(-1.0).
+    # 앞으로 가면 좌우 틱이 모두 늘어납니다 (펌웨어 LEFT/RIGHT_ENCODER_SIGN이 맞춰 줌).
     left_sign: 1.0
     right_sign: 1.0
     # 누적 카운터의 비트 폭. 되감김 보정에 씁니다. 0이면 되감김 없음으로 봅니다.
     counter_bits: 32
 
-    # 팀 실측 펌웨어 보정값 그대로 (README_STM_PI_INTERFACE.md 7절, 보드 h 응답 # CAL / # TRACK_MM).
-    # 400·1000 mm 직진과 제자리 회전으로 보정. 이전 스캔 정합값(반지름·배율·회전 방향별 간격)은 커밋 5abb92c.
-    counts_per_mm_left: 5.992624  # (5687/1460) x (40/26)
-    counts_per_mm_right: 5.900948 # (5600/1460) x (40/26)
-    wheel_separation: 0.1904      # m, 유효 윤거 (물리 206 mm)
+    # 팀 실측 펌웨어 보정값 그대로 (펌웨어 countsPerMmL/R, TRACK_MM, 보드 s 응답 # CAL).
+    # 2026-10-29판: X4 디코딩 기준 700 mm 명령에 770 mm → ×740/770, 90° 회전 4번이 340° → 윤거 190.4×360/340.
+    # 이전 판 값(5.992624/5.900948, 0.1904)은 A상 상승만 세던 펌웨어 기준이라 쓰지 않음 (커밋 a3ddbd4).
+    counts_per_mm_left: 5.759   # (5687/1460) x (40/26) x 740/770
+    counts_per_mm_right: 5.671  # (5600/1460) x (40/26) x 740/770
+    wheel_separation: 0.2016    # m, 유효 윤거 (물리 206 mm, 미끄럼 포함)
 
-    # 이 시간(초) 동안 틱이 없으면 통신 끊김으로 보고 오류 로그를 남깁니다.
+    # 이 시간(초) 동안 CSV가 없으면 통신 끊김으로 보고 q로 세우고 오류 로그를 남깁니다 (텔레메트리 0.05 s 주기).
     timeout: 0.5
     # 바퀴 속도 상한(m/s). 이보다 빠른 틱 증분은 모터 잡음으로 깨진 줄로 보고 버립니다.
-    # 실측 PWM 100에서 약 0.14 m/s입니다. 255면 비례로 약 0.36 m/s라 여유를 두었습니다.
-    max_wheel_speed: 0.5
+    # 펌웨어 최고 CRUISE_RPM 50 ≈ 0.23 m/s (바퀴 한 바퀴 약 278 mm)에 여유를 둠.
+    max_wheel_speed: 0.35
     odom_frame: odom
     base_frame: base_link
     # robot_localization 등 다른 노드가 odom -> base_link를 발행하면 false로 둡니다.
@@ -49,8 +50,3 @@ encoder_odom:
     # x, y, yaw 분산. 슬립이 심하면 키웁니다.
     pose_covariance: [0.01, 0.01, 0.05]
     twist_covariance: [0.01, 0.01, 0.05]
-
-    # BASE_NAV_V1 주행 (launch drive:=true 일 때만). /cmd_vel -> [V mm/s,rad/s] 20 Hz,
-    # 바퀴 속도 PI는 펌웨어 안(튜닝 전 초기값). 시작 때 [ARM] 한 번, ABORT 뒤에는
-    # ros2 service call /encoder_odom/arm std_srvs/srv/Trigger 로만 다시 무장합니다.
-    cmd_timeout: 0.25 # s, 이보다 오래된 /cmd_vel은 정지로 봅니다 (README 5절 250 ms).

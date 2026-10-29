@@ -104,7 +104,7 @@ flowchart TD
 
 ## 관련 문서
 
-- [[Agent|개발 원칙]]
+- [[AGENTS|개발 원칙]]
 - [[README|현재 구현 및 실행 상태]]
 - [[docs/competition_rules|대회 규정]]
 - [[docs/superpowers/plans/2026-09-10-competition-plan|대회 개발 계획]]

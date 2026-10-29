@@ -1,99 +1,59 @@
 # 미션 1 상태머신(cwu_nav/mission1.py) 설정입니다. 경기장 공개 전에 실측으로 확정하고,
 # 공개 후에는 고치지 않습니다(규정 2.3). 두 출발 칸 (1,9)·(9,1)에서 같은 값을 씁니다.
+# 2026-10-29 펌웨어: 연속 속도 없음. 이동은 [F100~1000] 직진·[TL/TR 10~180] 제자리 회전 하나씩.
 
 mission1:
   ros__parameters:
     bearing_topic: /target/bearing
-    cmd_topic: /cmd_vel          # collision monitor 입력. 회전 탐색·접근·후퇴 때만 발행
     rate_hz: 20.0
 
-    # 보드 PSD 정지 임계 (펌웨어 PSD_THRESHOLD, README_STM_PI_INTERFACE.md 9절). raw ADC
+    # 직진 중 정면 PSD 정지는 이 노드가 함 (2026-10-29 펌웨어는 PSD로 멈추지 않음): 텔레메트리(20 Hz) 정면 값이
+    # psd_threshold 이상으로 psd_hold_samples번 연속이면 q. 한 표본은 잡음으로 70~150 튐(2026-10-14). 운반 중에는 안 봄
     psd_threshold: 550
-    # 보드가 PSD로 멈췄을 때 "정면 때문"으로 볼 기준 (최근 1 s 정면 최대). 2026-10-14 실측: 집게 열림·앞 빔 ≤185,
-    # 큐브 앞 345~520, 잡기 좋은 위치 두 곳 중앙 514(550 이상 20%)·600(100%) — 둘 다 실제로 잘 잡힘(사용자 확인).
-    # 550을 그대로 쓰면 20 Hz 텔레메트리가 보드의 표본을 놓쳐 잡을 위치에서도 장애물로 오판(1·3회차).
+    psd_hold_samples: 2
+    # 그 정지를 "큐브 때문"(파지)으로 볼 기준 (최근 1 s 정면 최대). 2026-10-14 실측:
+    # 집게 열림·앞 빔 ≤185, 큐브 앞 345~520, 잡기 좋은 위치 중앙 514·600.
     grasp_front_min: 300
-    # 접근 마지막 구간: 중앙에 보고 들어왔고 정면 PSD가 이 값 이상이면 카메라 대신 직진 (4회차: 정면 240~370에서
-    # 큐브가 화면 아래로 잘려 방향 오차 ±11° 왕복). final_timeout_s 안에 보드 PSD 정지가 없으면 다시 탐색.
+    # 접근 마지막: 카메라가 큐브를 놓쳐도 정면 PSD가 이 값 이상이면 F100을 몇 번 더 (max_blind_steps)
     near_front_min: 250
-    final_timeout_s: 4.0
 
-    # 탐색. map 원점 = 출발 자세. (9,1)에서 x축을 등지고 +y로 놓으면(1,9는 점대칭) 중앙 (5,5)는
-    # 전방 4칸·좌측 4칸 = (1.6, 1.6) m. standoff만큼 앞에 멈춰 큐브를 밟지 않고 둘러봅니다.
+    # 탐색. map 원점 = 출발 칸 중심. (9,1)에서 x축을 등지고 +y로 놓으면(1,9는 점대칭) 중앙 (5,5)는
+    # 전방 4칸·좌측 4칸 = (1.6, 1.6) m → 칸 (4, 4). 먼저 그 칸과 옆 칸으로 갑니다.
     search_hint: [1.6, 1.6]
-    hint_standoff: 0.6
-    spin_speed: 0.4              # rad/s, 제자리 한 바퀴 약 16 s
-    initial_spin_deg: 90.0       # 출발 직후 첫 회전만 반시계 고정 각도, 끝나면 바로 힌트 목표로 출발 (2026-10-17)
-    # 제자리 탐색은 라이다로 spin_open_dist보다 멀리 트인 방향(spin_min_gap_deg 이상 폭)만 카메라가 지나가게 돎.
-    # 벽(200 mm)은 큐브(50 mm)를 가리므로 벽 쪽은 볼 필요 없음. 트인 곳이 없으면 돌지 않음 (2026-10-15).
+    initial_spin_deg: 90.0       # 출발 직후 첫 둘러보기만 반시계 고정 각도 (2026-10-17)
+    look_step_deg: 45            # 둘러보기 한 번 회전. 카메라 ±30°라 15° 겹침
+    # 둘러보기는 라이다로 spin_open_dist보다 멀리 트인 방향(spin_min_gap_deg 이상 폭)만 카메라가 지나가게 돎.
+    # 벽(200 mm)은 큐브(50 mm)를 가리므로 벽 쪽은 볼 필요 없음 (2026-10-15).
     spin_open_dist: 0.6
     camera_half_fov_deg: 30.0    # 웹캠 수평 화각 ±35°, 좌우 끝에 잘린 덩어리는 버리므로 30°
     spin_min_gap_deg: 5
 
-    # 접근 시각 서보 (servo.yaml과 같은 식). 정렬 전에는 전진하지 않음
-    k_yaw: 1.2
-    max_yaw: 0.8
-    min_yaw: 0.0
-    align_tol_rad: 0.09          # 약 5도
-    approach_speed: 0.06         # m/s. 보드 PSD 정지 전 제동거리를 줄이려고 낮게
-    # 접근 직진 중 몸통 앞쪽 절반 옆(앞으로 reach, 좌우 width 안)에 라이다 점이 3개 이상이면 밀지 않고 후퇴 후 다시 찾음.
-    # 11회차(2026-10-16) 옆면에 걸린 장애물을 밀고 감. 폭 = 몸체 반경 0.165: 이보다 안쪽 점만 직진하면 부딪힘.
-    # 0.18이던 14회차에 몸통 옆 0.17~0.21 m의 나란한 벽(닿지 않음)에 9번 걸려 미션 중단 → 0.165.
-    # 큐브(50 mm)는 라이다(약 170 mm) 아래라 안 걸림. Nav2 주행에는 쓰지 않음 (통로에서 멈추지 않게)
-    side_guard_reach: 0.165
-    side_guard_width: 0.165
-    # 걸리면 막힌 쪽 반대로 감시 영역이 빌 만큼(최대 detour_max_deg, 카메라 화각 안) 제자리에서 돌고 detour_s 직진 후
-    # 다시 조준 (15회차: 큐브로 가는 직선이 벽을 스쳐 같은 직선으로 9번 재접근). 한 접근에 max_detours번 넘으면
-    # 또는 PSD 직진 중이면 후퇴. 원형 몸체라 제자리 회전은 새로 닿는 곳 없음 (2026-10-16)
-    detour_max_deg: 25
-    detour_s: 2.0
-    max_detours: 6
+    # 접근: 방향 오차가 align_deg 이상이면 그만큼 회전(펌웨어 최소 10°), 아니면 approach_step_mm 직진
+    align_deg: 5.0
+    approach_step_mm: 100        # 펌웨어 최소 직진
+    max_blind_steps: 3           # 큐브가 화면 아래로 빠진 뒤 그대로 직진하는 횟수
+    max_approach_steps: 40
     sample_timeout_s: 0.5
-    confirm_count: 3             # 이만큼 검출이 confirm_window_s 안에 와야 목표물로 인정
+    confirm_count: 3             # 멈춘 뒤 이만큼 검출이 confirm_window_s 안에 와야 목표물로 인정
     confirm_window_s: 1.0
-    blind_forward_s: 1.0         # 정렬된 채 화면 아래로 빠진 뒤 계속 직진하는 시간 (실측)
     grasp_target_age_s: 2.0      # PSD 정지 때 이 안에 중앙에 보였어야 파지
 
-    # 파지 (펌웨어 8 = 잡기 99/78). 105/75는 잡히지만 오른쪽 서보가 혼자 열렸다 닫혀 3°씩 완화 (2026-10-14),
-    # 102에서 왼쪽이 또 말썽이라 왼쪽만 3° 더 완화 (2026-10-15)
+    # 파지 (8). 펌웨어 8 = 99/78: 105/75는 잡히지만 오른쪽 서보가 혼자 열렸다 닫혀 3°씩 완화
+    # (2026-10-14), 102에서 왼쪽이 또 말썽이라 왼쪽만 3° 더 (2026-10-15). 2026-10-29판 펌웨어에도 같은 값으로 넣음 (사용자 확인)
     grip_angles: [99, 78]
-    open_angles: [40, 140]       # 펌웨어 7/c = 열기. 이 각도에 도달해야 주행·파지 판정 시작
+    open_angles: [40, 140]       # 펌웨어 7 = 열기. 이 각도에 도달해야 탐색 시작
     grip_timeout_s: 4.0          # 서보 1도/30 ms, 40→99는 약 1.8 s
-    arm_timeout_s: 2.0
 
-    # PSD 정지 뒤 막힌 쪽 반대로 직진해 빠지기
-    backoff_speed: 0.05
-    backoff_s: 1.5               # 7.5 cm
-    # 막힘 탈출 (2026-10-17 18·19회차): GOTO·RETURN·SPIN 중 stuck_s 동안 2 cm·3° 넘게 안 움직이고 라이다 점이
-    # 중심에서 contact_radius 안(collision monitor 원 0.165 + 2 cm)이면, 가장 가까운 점 반대쪽 직선으로 위 거리만큼 뺌.
-    # 가는 쪽 통로(몸 반폭 escape_half_width = 실측 반경)가 비었을 때만. collision monitor를 거치지 않고 escape_topic에 직접 씀.
-    stuck_s: 3.0
-    contact_radius: 0.185
-    escape_half_width: 0.150
-    escape_topic: /cmd_vel_safe
-
-    # 운반 중 정면 PSD가 이 값 아래로 hold_lost_s 이상이면 놓친 것. 0이면 검사 안 함.
-    # 2026-10-14 실측: 큐브 문 상태 median 615(min 568), 큐브 없이 닫힘 579 → 닫힌 집게 날이 PSD를
-    # 가려 구별 불가. 정면 PSD로는 놓침을 판단할 수 없어 끔. (큐브가 열린 날 사이에 오면 585 → 파지 판단은 됨)
-    hold_min_raw: 0
-    hold_lost_s: 1.0
-    retry_wait_s: 2.0
-
-    # 미탐색 경계 선택
-    # 목표 칸은 벽에서 이만큼 (m). 400 mm 외길 통로 가운데는 지도상 벽 0.15~0.20 m로 보이므로 0.15 —
-    # 0.22면 외길 안쪽 경계는 영영 목표가 못 됨. 닿지 않게 하는 것은 collision monitor (2026-10-16)
-    frontier_clearance: 0.15
-    frontier_min_cells: 8        # 이보다 작은 경계 묶음은 잡음
-    frontier_min_dist: 0.5
-    # 로봇에서 벽까지 이 거리 이상인 바닥으로 이어진 경계만 (벽 너머로 넘겨 본 바닥 제외).
-    # 400 mm 미만 틈은 경기장에 없으므로 보이는 틈은 길: 전역 비용지도 계획용 robot_radius와 같게 (2026-10-16)
-    frontier_passage: 0.075
-    blacklist_radius: 0.4
-    # 탐색 중 앞·좌·우가 모두 벽(라이다 중앙값 < front·side)이고 뒤가 트였으면(> back) 막다른 곳: 목표를 버리고
-    # 돌아서 다른 길을 찾음 (2026-10-16 사용자 요청). 앞 0.35 = 막다른 칸 하나 안 (더 멀면 끝 칸 옆 꺾임을 못 봄)
-    dead_end_front: 0.35
-    dead_end_side: 0.35
-    dead_end_back: 0.5
+    # 격자 이동 (grid.py)
+    cell_size: 0.4
+    grid_span: 8                 # 출발 칸에서 ±8칸 (9×9 경기장 어느 모서리에서 출발해도 덮음)
+    turn_min_deg: 5.0            # 칸 중심 조준 오차가 이 이상이면 먼저 회전 (펌웨어 최소 10°)
+    max_cells: 1                 # 한 번 직진에 최대 칸 수. 회전 오차 5°면 400 mm에 옆 35 mm(통로 여유와 같음)
+    body_radius: 0.165           # 직진 전 라이다 통로 검사 폭·몸체 앞끝 (지름 330 mm)
+    settle_s: 0.5                # # DONE 뒤 SLAM 자세가 따라올 시간 (map 갱신 1 s)
+    move_timeout_s: 20.0         # 펌웨어 MOTION_TIMEOUT 15 s + 여유. 넘으면 q
+    max_goal_steps: 30           # 한 목표에 이만큼 움직여도 못 가면 다른 목표
+    max_return_retries: 3        # 복귀 경로 없음 → 옆 칸으로 옮겨 다시, 이 횟수 넘으면 종료
 
     # 이 시간 안에 보드 정지가 이만큼 넘으면 멈춤 (부딪힘 반복 방지)
     max_aborts: 8

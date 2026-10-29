@@ -1,4 +1,28 @@
-# STM–Pi 연동 README — BASE_NAV_V1
+# STM–Pi 연동 README
+
+## 0. 현재 보드 펌웨어 (2026-10-29판) — Pi 쪽 연동
+
+기준은 팀원의 `RobotIntegrated.ino` + `MotorControl.h`(커밋 676862f, 84e5663)이고, 미션 1을 위해 레포 판에서 아래를 바꿨습니다.
+**아래 1~10절의 BASE_NAV_V1 속도 모드(`[N1]` `[ARM]` `[V…]` `[PF0/1]`)는 이 판에 없습니다.** Pi는 Nav2 없이 칸 단위 이산 이동을 씁니다
+(`cwu_base/encoder_odom.py`, `cwu_nav/grid.py`, `cwu_nav/mission1.py`).
+
+| 항목 | 이 판 | Pi가 하는 일 |
+|---|---|---|
+| 텔레메트리 | `t`로 켜고 끄는 토글, **20 Hz** (`TELEMETRY_MS 50`). CSV 12필드 순서·단위는 6절과 같음 (L·R = X4 카운트 ÷ 4) | `encoder_odom`이 시작·`# ROBOT40_V4 READY` 뒤 `t`, `Telemetry = OFF`면 다시 `t` |
+| 이동 | `[F100~1000]` 전진 mm, `[TL/TR10~180]` 제자리 회전. 끝나면 `# TARGET_REACHED` → 300 ms 뒤 `# DONE …`. 15 s 넘으면 `# ABORT MOTION_TIMEOUT` | `/base/command`(std_msgs/String) "F400"·"TL90" → `[F400]`·`[TL90]` (허용 목록 밖은 버림) |
+| 정지 | `q`·공백 → `# STOP`. **하트비트 없음, PSD로 멈추지 않음** (한 바퀴 시험 `[ML]`/`[MR]`만 네 방향 `# ABORT PSD_PIVOT`). 엔코더 이상(`ENCODER_*`, `WHEEL_MISMATCH`, `CONTROL_OVERRUN`)은 그대로 | `mission1`이 직진 중 정면 PSD ≥ 550 두 표본 연속이면 `q`(운반 중 제외). `encoder_odom`은 `# REJECT`·CSV 0.5 s 끊김·종료 때 `q` |
+| 집게 | `7` 열기 40/140, `8` 잡기 99/78 (정지 중에만) | `/base/command` "7"·"8" |
+| 보정 | `countsPerMm` 5.759/5.671 (×740/770), `TRACK_MM` 201.6 | `encoder.yaml` 같은 값 |
+
+### 팀원 판 대비 바꾼 것 (2026-10-29, 사용자 결정)
+1. **하트비트(`!`, 700 ms) 제거.** Pi가 죽으면 진행 중인 명령 하나(최대 F1000, 15 s)는 끝까지 감.
+2. **직진 중 정면 PSD 정지 제거.** 판단은 Pi(`mission1`)가 20 Hz 텔레메트리로 하고 `q`. 보드가 직접 멈출 때보다 최대 약 0.1 s 늦음.
+3. **텔레메트리 200 → 50 ms.** 위 2의 늦음과 odom 간격을 줄이려고.
+4. **잡기 99/78.** 105/75는 오른쪽 서보가 혼자 열렸다 닫혔음(10-14), 왼쪽 102도 말썽(10-15). 그 밖의 변수 값은 팀원 판 그대로.
+
+---
+
+# (이전 판) BASE_NAV_V1
 
 작성일: 2026-10-14 (한국 시간)
 

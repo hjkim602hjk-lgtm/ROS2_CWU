@@ -16,6 +16,5 @@ setup(
     maintainer='CWU Robot Team', maintainer_email='maintainer@example.com',
     description='Differential-drive encoder odometry', license='Apache-2.0',
     tests_require=['pytest'],
-    entry_points={'console_scripts': ['encoder_odom = cwu_base.encoder_odom:main',
-                                        'motor_bridge = cwu_base.motor_bridge:main']},
+    entry_points={'console_scripts': ['encoder_odom = cwu_base.encoder_odom:main']},
 )

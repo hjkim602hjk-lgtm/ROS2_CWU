@@ -26,7 +26,8 @@ slam_toolbox:
     minimum_travel_distance: 0.25
     minimum_travel_heading: 0.2
     transform_publish_period: 0.05
-    transform_timeout: 0.2
+    # 0.2 → 0.5 (2026-10-29): 새 펌웨어 텔레메트리 5 Hz라 odom TF 간격이 0.2 s
+    transform_timeout: 0.5
     tf_buffer_duration: 30.0
     # 2.0 → 1.0 (2026-10-17 사용자 결정): 지도·전역 비용지도 반영이 느림. Pi CPU 증가 여부는 실물에서 확인
     map_update_interval: 1.0
