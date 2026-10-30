@@ -11,7 +11,7 @@ from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
 from tf2_ros import Buffer, TransformListener
 
-YAW = 3.0788  # mount.yaml laser yaw
+YAW = 3.1381  # mount.yaml laser yaw
 import sys
 CENTER = math.radians(float(sys.argv[1])) if len(sys.argv) > 1 else 0.0  # search direction (base frame)
 rclpy.init()

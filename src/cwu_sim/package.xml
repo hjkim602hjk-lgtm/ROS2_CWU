@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<!-- cwu_sim: PC 전용 Gazebo Classic 시뮬레이션. 로봇에는 설치하지 않습니다(경기 실행 경로와 무관).
+     랜덤 9x9 장애물 경기장 + 가짜 보드(fake_board)로 cwu_nav mission1을 그대로 돌려 봅니다. -->
+<package format="3">
+  <name>cwu_sim</name>
+  <version>0.1.0</version>
+  <description>Gazebo random-arena simulation for the mission 1 node (PC only).</description>
+  <maintainer email="maintainer@example.com">CWU Robot Team</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>ament_python</buildtool_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>gazebo_ros</exec_depend>
+  <exec_depend>gazebo_plugins</exec_depend>
+  <exec_depend>gazebo_msgs</exec_depend>
+  <exec_depend>slam_toolbox</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>cwu_nav</exec_depend>
+  <exec_depend>cwu_perception</exec_depend>
+  <test_depend>python3-pytest</test_depend>
+  <export><build_type>ament_python</build_type></export>
+</package>

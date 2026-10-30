@@ -3,7 +3,7 @@ import json, math, sys
 import numpy as np
 sys.path.insert(0, __import__('os').path.join(__import__('os').path.dirname(__import__('os').path.abspath(__file__)), '..'))  # tools/
 from odom_calib import icp, points
-YAW = 3.0788
+YAW = 3.1381
 def load(p):
     d = json.load(open(p))
     return d, (0, np.array(d['ranges']), d['angle_min'], d['inc'], d['range_min'], 0)

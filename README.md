@@ -50,7 +50,9 @@ Nav2 없이 400 mm 격자 칸 단위로 "돌고 → 한 칸 직진"을 하나씩
 ```text
 RELEASE  7 (집게 열기, 다 열려야 다음으로)
 LOOK     제자리 TL/TR 45°씩. 라이다로 트인 방향만 카메라가 지나가게 (첫 번째는 반시계 90°만)
-GOTO     중앙 힌트 칸 (4,4)과 그 옆 칸 → 이후 아직 못 본 칸 경계. 칸 BFS → 회전 또는 F400 하나씩
+GOTO     중앙 힌트 칸 (4,4)과 그 옆 칸. 칸 BFS(같은 길이면 직진 많은 쪽) → 회전 또는 직진(최대 2칸 F800) 하나씩
+CRUISE   힌트 뒤: 정면 칸이 비었고 지나간 적 없으면 멈춰서 카메라만 확인하며 계속 직진, 막히면 LOOK
+GOTO     그래도 없으면 아직 못 본 칸 경계로. 탐색 중 지나간 칸은 목표에서 빼고 경로에서도 피함(외길만 예외)
 APPROACH 화면 오차 ≥ 5°면 그만큼 회전(최소 10°), 아니면 F100. 화면에서 빠지면 F100 최대 3번 더
 GRASP    직진 중 정면 PSD 550 이상(두 표본) → mission이 q로 세움. 접근 중이고 직전에 중앙에 보였으면 파지: 8 (잡기 99/78)
 RETURN   출발 칸 (0,0)으로 같은 칸 이동. 경로가 없으면 막힘 표시를 비우고 옆 칸으로 옮겨 재시도(최대 3번)
@@ -69,6 +71,7 @@ DONE     집게를 닫은 채 정지
 ```bash
 # 로봇을 출발 칸에 "경기장이 로봇 왼쪽"이 되게 놓고 (PC에서, 경기 시작 명령 한 번)
 tools/field/start_mission1.sh      # Pi에서 SLAM + 카메라 + mission1, 로그 Pi ~/mission1.log, 텔레메트리 ~/telemetry_*.csv
+tools/field/m2_start.sh            # 미션 2: Pi에서 LiDAR + 엔코더 + 카메라 + mission2 (SLAM 없음), 로그 ~/mission2.log (m2_logs.sh, m2_stop.sh)
 tools/field/stop_mission1.sh       # 시험용 정지 (경기에서는 쓰지 않음)
 
 # Pi에서 보드에 명령 하나 직접 보내기 (encoder_odom이 떠 있을 때)
@@ -92,7 +95,7 @@ python3 src/cwu_base/test/run_encoder_check.py            # 가짜 시리얼로 
 
 1. 400 mm 칸에서 TL90 ×4 → SLAM 방향 오차 (회전 약 0.7 rad/s, odom 5 Hz)
 2. 개활지 접근·파지·복귀 3회 → 모의 경기장 3회
-3. 미션 2는 이 펌웨어 기준으로 아직 설계 안 함
+3. 미션 2: `cwu_nav/mission2.py` (설계 `docs/superpowers/specs/2026-10-30-mission2-design.md`). Gazebo 배틀: `tools/sim/run_battle.sh SEED`. 실물 미시험
 
 ---
 

@@ -1,0 +1,73 @@
+# 미션 2 상태머신(cwu_nav/mission2.py) 설정입니다. 경기장 공개 전에 실측으로 확정하고, 공개 후에는 고치지 않습니다.
+# 네 출발 칸 어디서든 같은 값을 씁니다 (출발 칸을 (2,2)로 봄, 설계 4.1). 길이 m, 각도 도, 시간 s.
+# 2026-10-30 첫 판: 미션 1 실측값(PSD·집게)을 시작점으로, 나머지는 Gazebo 배틀 시뮬레이션 기준.
+
+mission2:
+  ros__parameters:
+    bearing_topic: /target/bearing
+    rate_hz: 20.0
+    match_s: 300.0               # 규정 16조 5분. 동시 확보 재경기(3분)는 180으로 따로 실행
+
+    # 정면 PSD (raw ADC, 미션 1 실측): 집게 열림·앞 빔 ≤185, 큐브 앞 345~520, 쥔 큐브 ~600~615
+    psd_threshold: 550           # 잡기 트리거·확보 판정
+    psd_hold_samples: 2          # 잡기: 연속 이만큼 임계 이상
+    near_front_min: 250          # 집게 바로 앞: 방향을 더 안 고치고 천천히 직진
+    drop_s: 0.6                  # 쥔 뒤 정면 PSD가 이만큼 계속 임계 아래면 놓침
+    grip_angles: [99, 78]
+    open_angles: [40, 140]
+    grip_timeout_s: 4.0
+    grip_settle_s: 0.15          # 정지([V0,0]) 뒤 "8"을 보내기까지 (보드는 정지 중에만 7·8을 받음)
+
+    # 출발 회전·찾기
+    spin_speed: 0.9              # rad/s 반시계
+    spin_max_deg: 150.0          # 이만큼 돌아도 안 보이면 중앙으로
+    confirm_count: 2             # confirm_window_s 안에 검출이 이만큼이면 "보임"
+    confirm_window_s: 0.6
+    lost_s: 1.5                  # 접근 중 이만큼 안 보이면 놓침
+    centre_search_m: 0.35        # 중앙에서 이 안인데 안 보이면 제자리에서 둘러봄
+    search_spin_speed: 0.6       # 그때 회전 rad/s (출발 회전보다 느리게: 카메라가 놓치지 않게)
+    blind_push_s: 4.0            # 중앙에서 이만큼 안 보이면 마지막으로 빨간색을 본 곳 근처 로봇을 보유자로 보고 밂
+
+    # 주행 (펌웨어 한계 0.15 m/s, 1.2 rad/s)
+    drive_speed: 0.15
+    approach_speed: 0.15
+    near_speed: 0.05
+    k_heading: 1.5
+    turn_only_deg: 35.0          # 목표 방향 오차가 이보다 크면 제자리 회전
+    k_servo: 2.0                 # 접근: 화면 오차(rad) → 회전 rad/s
+    align_deg: 8.0               # 접근: 오차가 3배 넘으면 돌기만
+
+    # 순환 (HOLD): (3,3)~(7,7) 테두리 = 꼭짓점 (±0.8, ±0.8) 정사각형, 반시계
+    ring_half: 0.8
+    ring_lead: 0.35
+    avoid_m: 0.6                 # 상대 로봇이 이 안이면 반대쪽으로 비킴
+    flee_step: 0.5
+
+    # 밀기 (PUSH): 목표물을 쥔 상대를 가장 가까운 모서리 칸으로
+    push_speed: 0.15
+    push_behind: 0.4             # 상대 뒤(모서리 반대쪽) 이 거리에서 정렬한 뒤 밈
+    push_lateral_tol: 0.15       # 상대→모서리 선에서 이만큼 안이면 밀기 시작
+    push_timeout_s: 30.0
+    push_lost_s: 3.0             # 밀기 대상 LiDAR 묶음을 이만큼 못 찾으면 그만둠
+    held_centre_min: 0.5         # 빨간 방향선 위 로봇이 중앙에서 이보다 멀어야 "쥐고 있음" (0.35: 큐브로 다가가는 상대를 보유로 봄, Gazebo 1)
+    bearing_tol_deg: 6.0
+    block_reach: 0.35            # 집게 앞 띠(±block_half_width)에 LiDAR 점 = 상대 로봇 → 닫지 않음
+    block_half_width: 0.12
+
+    # 모서리 금지 (모든 상태): 모서리 칸 + corner_margin(로봇 반지름 0.165 + 여유) 안으로 더 들어가는 전진 금지
+    corner_margin: 0.25
+    corner_lookahead: 0.25
+
+    # 위치 (odom + 벽 맞춤): 스캔 시각의 odom 자세로 벽 x,y = ±1.8에 맞춤, 한 번에 fix_gain만큼
+    fix_period_s: 0.2
+    fix_gain: 0.5
+    fix_tol: 0.3                 # 예상 벽에서 이 안의 점만 벽으로
+    fix_min_points: 15
+    heading_fix_max_deg: 10.0    # 벽 방향과 이보다 크게 어긋난 방향 보정은 버림
+
+    # 상대 로봇 (벽 안쪽 LiDAR 점 묶음)
+    robot_wall_margin: 0.15
+    robot_gap: 0.1
+    robot_min_points: 3
+    robot_max_extent: 0.45
+    robot_track_m: 0.4           # 밀기 대상: 지난 위치에서 이 안의 묶음을 같은 로봇으로

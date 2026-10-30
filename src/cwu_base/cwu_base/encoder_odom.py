@@ -3,10 +3,12 @@
 # 프로토콜과 바퀴 제원은 encoder.yaml에서 읽으며, 미입력 값이 있으면 실행을 거부합니다.
 #
 # [공부 노트] 이 노드의 입력과 출력
-#   입력  : 시리얼 포트 /dev/ttyAMA0 에서 0.05초마다 들어오는 CSV 한 줄 (`t`로 켬)
+#   입력  : 시리얼 포트 /dev/ttyAMA0 에서 0.05초마다 들어오는 CSV 한 줄 ([N1]로 켬)
 #           (규약: 레포 README_STM_PI_INTERFACE.md, 펌웨어 RobotIntegrated.ino 2026-10-29판)
 #   명령  : /base/command (std_msgs/String) "F400", "TL90", "PF0", "q", "7", "8" … → 보드로 그대로 전달
-#           (허용 목록 COMMAND 밖은 버림). 보드는 하트비트·정면 PSD 정지가 없어 정지는 mission1이 q로 합니다.
+#           (허용 목록 COMMAND 밖은 버림). Pi가 시작한 이동은 하트비트 '!'가 있어야 하므로 10 Hz로 보냅니다
+#   주행  : 보드가 # ARMED 상태이면 /cmd_vel을 [V mm/s,rad/s]로 20 Hz (끊기면 [V0,0] = 정지·무장 유지).
+#           무장은 미션 노드가 /base/command "ARM"으로 요청 (펌웨어 676862f + 10-16 파지 판정 + 속도 모드, 2026-10-30).
 #   설정  : config/encoder.yaml (포트, 바퀴 반지름, 트레드, 회전당 틱 …)
 #   출력1 : /odom 토픽 (nav_msgs/Odometry) — 위치 + 속도 + 불확실성
 #   출력2 : TF  odom → base_link — "전원 켠 자리(odom)에서 로봇 몸체(base_link)가 어디 있나"
@@ -32,7 +34,7 @@ import re    # 정규식: "ENC,1499,1406" 에서 숫자만 뽑기
 # ── ROS 2 / 외부 패키지 ── (package.xml 에 의존성으로 적혀 있어야 합니다)
 import rclpy                    # ROS 2 파이썬 클라이언트 라이브러리. 노드를 만들고 돌리는 뼈대
 import serial                   # pyserial: 시리얼 포트 열기/읽기 (apt: python3-serial)
-from geometry_msgs.msg import Quaternion, TransformStamped  # 회전(쿼터니언), TF 한 개
+from geometry_msgs.msg import Quaternion, TransformStamped, Twist  # 회전(쿼터니언), TF 한 개, 속도 명령
 from std_msgs.msg import Int32MultiArray, String
 from nav_msgs.msg import Odometry                           # /odom 메시지 형식
 from rclpy.executors import ExternalShutdownException
@@ -56,12 +58,14 @@ STARTUP_GRACE = 3.0
 # 펌웨어 텔레메트리 주기는 0.05 s(TELEMETRY_MS). 이 값은 밀린 줄이 두 poll에 나뉘어 들어와 dt가 0에 가까워도
 # 한 주기 분량의 이동은 허용하도록 속도 상한 검사의 dt 하한으로 씁니다.
 SAMPLE_PERIOD = 0.1
-# 정지 중에도 CSV를 받으려면 't'로 켭니다. 't'는 켜고 끄는 토글이라 응답(STREAM_REPLY ON/OFF)으로
-# 상태를 따라가고, OFF가 오면 다시 보냅니다.
-STREAM_TOGGLE = b't'
-STREAM_REPLY = b'Telemetry = '
+# 정지 중에도 20 Hz CSV를 켭니다 ([N1]은 토글이 아니라 여러 번 보내도 같음).
+STREAM_ON = b'[N1]'
+# 펌웨어 속도 모드 한계 (MAX_V_MM_S, MAX_W_RAD_S). 넘으면 보드가 ABORT VELOCITY_RANGE로 멈춥니다.
+MAX_V, MAX_W = 0.15, 1.2
 # /base/command 허용 목록. 괄호 명령은 [..]로 감싸 보내고 한 글자 명령(q 정지, 7 열기, 8 잡기)은 그대로.
-COMMAND = re.compile(r'(F\d{3,4}|T[LR]\d{2,3})')
+COMMAND = re.compile(r'(F\d{3,4}|T[LR]\d{2,3}|PF[01]|ARM)')  # PF0/PF1 = 운반 중 정면 PSD 정지 끄기/켜기
+# 펌웨어는 Pi(UART)가 시작한 이동에 하트비트를 요구합니다: 200 ms마다 '!', 700 ms 넘으면 ABORT.
+HEARTBEAT, HEARTBEAT_PERIOD = b'!', 0.1
 SINGLE = ('q', '7', '8')
 # 이 줄 뒤의 누적 틱은 0부터 다시 셉니다 (부팅, z 명령).
 COUNTER_RESET = (b'# ROBOT40_V4 READY', b'# ENCODERS_RESET')
@@ -76,6 +80,16 @@ COUNTER_RESET = (b'# ROBOT40_V4 READY', b'# ENCODERS_RESET')
 #   돌려주는 값: (왼쪽, 오른쪽) 정수 튜플, 쓸 만한 줄이 없으면 None
 #   ROS 를 안 쓰는 함수라 테스트에서 따로 불러 시험할 수 있습니다.
 # ─────────────────────────────────────────────────────────────────────────────
+def drive_frame(linear, angular):
+    """cmd_vel -> "[Vmm/s,rad/s]" (forward +, CCW +). No spaces: a space stops the board.
+
+    Both are scaled down together past the firmware limits so the curvature is kept;
+    the firmware aborts and disarms on any value beyond them.
+    """
+    scale = max(1.0, abs(linear) / MAX_V, abs(angular) / MAX_W)
+    return f'[V{linear / scale * 1000:.0f},{angular / scale:.3f}]'.encode()
+
+
 def board_command(text):
     """/base/command text -> bytes for the board, or None if not allowed.
 
@@ -129,6 +143,8 @@ class EncoderOdometry(Node):
             ('port', '/dev/ttyAMA0'), ('baud', 115200),         # 시리얼 포트, 속도
             ('counts_per_mm_left', UNSET), ('counts_per_mm_right', UNSET),  # 실측 필수 → 기본 -1
             ('wheel_separation', UNSET),                        # 실측 필수 → 기본 -1
+            # 회전 방향별 배율 = 실제 회전 / odom 회전 (tools/field/turn_calib.py로 측정, 1.0 = 보정 없음)
+            ('turn_scale_ccw', 1.0), ('turn_scale_cw', 1.0),
             ('left_field', -1), ('right_field', -1),            # 줄에서 몇 번째 숫자인지
             ('left_sign', 1.0), ('right_sign', 1.0),            # 방향 뒤집기(+1 / -1)
             ('counter_bits', 32), ('timeout', 0.5), ('max_wheel_speed', 0.35),
@@ -136,6 +152,7 @@ class EncoderOdometry(Node):
             ('publish_tf', True),                               # TF 도 낼지
             ('pose_covariance', [0.01, 0.01, 0.05]),            # 위치 불확실성 (x, y, yaw)
             ('twist_covariance', [0.01, 0.01, 0.05]),           # 속도 불확실성
+            ('cmd_vel_topic', '/cmd_vel'), ('cmd_timeout', 0.25),  # 이보다 오래된 cmd_vel은 정지로 봄
         ])
         # 파라미터 객체 목록 → {이름: 값} 사전으로 정리. 이후 self.cfg['port'] 처럼 꺼내 씁니다.
         self.cfg = {d.name: d.value for d in p}
@@ -170,14 +187,18 @@ class EncoderOdometry(Node):
         self.get_logger().info(
             f"엔코더 {self.cfg['port']} @ {self.cfg['baud']} baud, "
             f"필드 L={self.cfg['left_field']} R={self.cfg['right_field']}")
-        self._send(STREAM_TOGGLE)  # 부팅 직후 스트림은 꺼져 있음. 이미 켜져 있었으면 OFF 응답 → 다시 켬
+        self.armed, self.cmd, self.cmd_stamp = False, (0.0, 0.0), None  # 보드 # ARMED 상태, 마지막 cmd_vel
+        self._send(STREAM_ON)
         # 시리얼을 블로킹으로 읽지 않고 짧은 주기로 비웁니다. 스레드가 없어야
         # 종료와 파라미터 처리가 단순하고, MCU 전송 주기에 맞춰 발행됩니다.
         # create_timer(주기초, 함수): 그 주기마다 함수를 자동 호출. rclpy.spin() 이 돌려줍니다.
         self.create_timer(0.02, self.poll)                       # 20 ms 마다 시리얼 확인
         self.create_timer(self.cfg['timeout'], self.check_link)  # timeout 마다 끊김 확인
+        self.create_timer(HEARTBEAT_PERIOD, lambda: self._send(HEARTBEAT))
         # 미션 노드가 보드에 이동·집게 명령을 보내는 유일한 길입니다. 결과는 /base/event 로 돌아옵니다.
         self.create_subscription(String, '/base/command', self.on_command, 10)
+        self.create_subscription(Twist, self.cfg['cmd_vel_topic'], self.on_cmd_vel, 10)
+        self.create_timer(0.05, self.send_drive)  # 20 Hz: 펌웨어는 0.3 s 명령이 없으면 멈추고 무장을 풂
 
     # 밑줄(_)로 시작하는 이름 = "이 클래스 안에서만 쓰는 함수"라는 파이썬 관례
     def _require_measured_values(self):
@@ -210,9 +231,6 @@ class EncoderOdometry(Node):
         *lines, self.buffer = self.buffer.split(b'\n')
         # 카운터가 0으로 돌아간 묶음은 앞뒤 줄이 섞여 있어 통째로 버립니다(다음 줄이 새 기준).
         reset = [self.on_status(line.strip()) for line in lines if line.startswith(b'#')]
-        for line in lines:
-            if line.startswith(STREAM_REPLY) and b'OFF' in line:
-                self._send(STREAM_TOGGLE)  # 토글이 어긋나 꺼졌으면 다시 켬
         # 버퍼가 너무 커지면 앞(오래된 쪽)을 잘라냄. 뒤 MAX_BUFFER 바이트만 남김.
         del self.buffer[:-MAX_BUFFER]
         # 이번에 완성된 줄 중 최신 한 줄만 사용
@@ -254,7 +272,10 @@ class EncoderOdometry(Node):
         # 정상 → 기준점 갱신
         self.ticks, self.stamp = (left_ticks, right_ticks), now
         # kinematics.integrate 로 새 위치 계산
-        sep = self.cfg['wheel_separation']
+        # 회전 방향마다 배율이 다름(실물: 시계 방향을 약 3% 적게 셈 → 방향 오차가 쌓여 복귀 실패, 2026-10-31):
+        # 그 방향의 유효 트레드를 배율로 나눠 회전량만 고침
+        scale = self.cfg['turn_scale_ccw'] if right > left else self.cfg['turn_scale_cw']
+        sep = self.cfg['wheel_separation'] / scale
         self.pose = integrate(self.pose, left, right, sep)
         # 발행. 속도 = 거리 ÷ 시간
         #   선속도(m/s)  = 두 바퀴 평균 거리 / dt
@@ -306,6 +327,10 @@ class EncoderOdometry(Node):
     def on_status(self, line):
         """보드 상태 줄을 /base/event 로 넘깁니다. 카운터가 0으로 돌아갔으면 True."""
         self.events.publish(String(data=line.decode(errors='replace')))
+        if line.startswith(b'# ARMED'):
+            self.armed = True
+        elif line.startswith((b'# ABORT', b'# REJECT', b'# STOP')):
+            self.armed = False  # 보드는 ABORT·STOP에 무장을 풂. 다시 무장은 미션 노드가 원인을 본 뒤 ARM으로
         if line.startswith((b'# ABORT', b'# REJECT')):
             self.get_logger().warn(f'보드: {line.decode(errors="replace")}')
             # 거절은 상태가 불확실하다는 뜻이라 q로 확실히 세웁니다 (정지 중이면 무해).
@@ -314,9 +339,9 @@ class EncoderOdometry(Node):
         if not line.startswith(COUNTER_RESET):
             return False
         self.get_logger().warn(f'보드 카운터 초기화: {line.decode(errors="replace")}. 기준점을 다시 잡습니다.')
-        self.ticks = None
+        self.ticks, self.armed = None, False
         if line.startswith(b'# ROBOT40_V4 READY'):
-            self._send(STREAM_TOGGLE)  # 부팅 직후 스트림은 꺼져 있음
+            self._send(STREAM_ON)  # 부팅 직후 스트림은 꺼져 있음
         return True
 
     def on_command(self, msg):
@@ -325,6 +350,19 @@ class EncoderOdometry(Node):
             self.get_logger().error(f'허용되지 않은 보드 명령 {msg.data!r}: 버림')
             return
         self._send(data)
+
+    def on_cmd_vel(self, msg):
+        self.cmd, self.cmd_stamp = (msg.linear.x, msg.angular.z), self.get_clock().now()
+
+    def send_drive(self):
+        """Latest cmd_vel as [V…] while armed, or [V0,0] once it is older than cmd_timeout."""
+        if not self.armed:
+            return
+        linear, angular = self.cmd
+        if self.cmd_stamp is None or (
+                self.get_clock().now() - self.cmd_stamp).nanoseconds / 1e9 > self.cfg['cmd_timeout']:
+            linear = angular = 0.0
+        self._send(drive_frame(linear, angular))
 
     def _send(self, data):
         try:
@@ -348,9 +386,9 @@ class EncoderOdometry(Node):
         # 아직 기준 시간 안이면 정상
         if (self.get_clock().now() - since).nanoseconds / 1e9 <= limit:
             return
-        # CSV가 끊기면 q로 세웁니다(이동 중 자세를 모름). 스트림 토글은 건드리지 않습니다:
-        # 링크만 끊긴 것이면 't'가 스트림을 꺼 버립니다. 부팅이면 READY 줄에서 다시 켭니다.
+        # CSV가 끊기면 q로 세우고(이동 중 자세를 모름) 스트림을 다시 켭니다 ([N1]은 여러 번 보내도 같음).
         self._send(b'q')
+        self._send(STREAM_ON)
         # 이미 경고했으면 또 하지 않음 (로그 도배 방지)
         if self.warned:
             return
@@ -374,8 +412,13 @@ def main():
         rclpy.spin(node)       # 무한 루프: 타이머·구독 콜백을 때 맞춰 호출. Ctrl+C 까지 여기 머묾
     except (KeyboardInterrupt, ExternalShutdownException):  # Ctrl+C 는 정상 종료로 취급
         pass
+    except Exception:
+        # SIGINT로 ROS가 먼저 꺼진 뒤 타이머가 /odom을 발행하면 "context is invalid"가 남 (2026-10-30 정지 때).
+        # 종료 중이면 무시하고 아래에서 q를 보냄. 동작 중 오류는 그대로 올림
+        if rclpy.ok():
+            raise
     finally:                   # 에러가 나든 안 나든 항상 실행되는 정리 구간
-        node.serial.write(b'q')  # 종료 시 즉시 정지 (보드는 하트비트가 없어 이것 없이는 진행 중 명령을 끝까지 감)
+        node.serial.write(b'q')  # 종료 시 즉시 정지 (하트비트 만료 0.7 s 를 기다리지 않음)
         node.serial.close()    # 포트 닫기 (잠금 해제 → 다른 노드가 열 수 있게)
         node.destroy_node()
         rclpy.try_shutdown()   # ROS 2 통신 종료

@@ -13,7 +13,7 @@
 #     counts_per_mm, 회전 오차는 wheel_separation으로 보정합니다.
 
 # 2026-10-29부터 보드 펌웨어는 새 RobotIntegrated.ino + MotorControl.h (규약 README_STM_PI_INTERFACE.md).
-# 노드가 't'로 켜는 20 Hz CSV: ms,mode,L,R,PWM_L,PWM_R,PSD_FRONT,PSD_REAR,PSD_LEFT,PSD_RIGHT,SERVO_L,SERVO_R
+# 노드가 [N1]로 켜는 20 Hz CSV: ms,mode,L,R,PWM_L,PWM_R,PSD_FRONT,PSD_REAR,PSD_LEFT,PSD_RIGHT,SERVO_L,SERVO_R
 # L·R은 X4 카운트 ÷ 4 (예전 A상 상승 단위 유지). 이동 명령은 /base/command → [F400]·[TL90] 등.
 
 encoder_odom:
@@ -37,6 +37,10 @@ encoder_odom:
     counts_per_mm_left: 5.759   # (5687/1460) x (40/26) x 740/770
     counts_per_mm_right: 5.671  # (5600/1460) x (40/26) x 740/770
     wheel_separation: 0.2016    # m, 유효 윤거 (물리 206 mm, 미끄럼 포함)
+    # 회전 방향별 배율 = 실제 회전 / odom 회전. tools/field/turn_calib.py가 360° 회전 전후 라이다 벽 방향으로 잼
+    # (경기장 벽·장애물이 서로 평행·직각이라 360° 돌면 같은 방향으로 보여야 함). 1.0 = 보정 없음 (2026-10-31)
+    turn_scale_ccw: 1.0
+    turn_scale_cw: 1.0
 
     # 이 시간(초) 동안 CSV가 없으면 통신 끊김으로 보고 q로 세우고 오류 로그를 남깁니다 (텔레메트리 0.05 s 주기).
     timeout: 0.5

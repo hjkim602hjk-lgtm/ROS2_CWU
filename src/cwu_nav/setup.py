@@ -14,7 +14,8 @@ setup(
     ],
     install_requires=['setuptools'], zip_safe=True,
     maintainer='CWU Robot Team', maintainer_email='maintainer@example.com',
-    description='Mission 1 state machine and grid-cell planner', license='Apache-2.0',
+    description='Mission 1 and mission 2 state machines', license='Apache-2.0',
     tests_require=['pytest'], entry_points={'console_scripts': [
-        'mission1 = cwu_nav.mission1:main']},
+        'mission1 = cwu_nav.mission1:main',
+        'mission2 = cwu_nav.mission2:main']},
 )
