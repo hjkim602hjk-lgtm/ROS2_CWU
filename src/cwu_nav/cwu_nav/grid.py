@@ -167,6 +167,65 @@ def bfs_avoiding(start, passable, is_goal, avoid, heading=None):
             or bfs(start, passable, is_goal, heading))
 
 
+def clear_pixels(grid, resolution, clearance):
+    """True where every pixel within clearance (m) is seen and not a wall: centres the body may cross on a shortcut."""
+    bad = (grid < 0) | (grid >= 50)
+    # 내림: 올림이면 0.17 m가 0.20 m(4화소)가 되어 폭 0.4 m 통로 한가운데까지 막혀 지름길이 하나도 안 났음
+    # (2026-10-31 Gazebo 6맵: 경유점 42~73개, 매번 경유점에 못 닿음)
+    k = int(clearance / resolution)
+    near = bad.copy()
+    for dr in range(-k, k + 1):
+        for dc in range(-k, k + 1):
+            if dr * dr + dc * dc <= k * k:
+                near |= np.roll(np.roll(bad, dr, 0), dc, 1)
+    return ~near
+
+
+def trail_route(start, trail, clear, origin, resolution, size, wide=None, step=0.05):
+    """Waypoints from start back along the driven trail (oldest = home last), cut short wherever a straight line is clear.
+
+    복귀는 왔던 길 기준으로 빠르게, 사선 가능, 부딪히지만 않게 (2026-10-31 사용자). 자취를 지나간 칸 순서로 바꾸고 같은
+    칸에 다시 온 고리(막다른 길에 들어갔다 나온 것)는 잘라 칸 중심을 이음: 자취 점 그대로는 통로 가운데서 몇 cm 벗어나
+    지름길 검사를 못 넘어 10 cm마다 경유점이 됐음 (Gazebo 6맵 42~73개). 이웃 칸 중심끼리는 늘 이음(지나간 길).
+    그보다 먼 칸으로 곧장 가는 지름길(사선 포함)은 몸 둘레 clear 화소만 지날 때만. 남은 장애물은 주행 중 라이다 정지가 막음.
+    사선(축에 안 맞는) 지름길은 더 넓은 wide로: 0.15 m 여유로 낸 사선이 벽 모서리를 스쳐 라이다가 섰음 (Gazebo m1 TR36)
+    """
+    cells = []
+    for x, y in reversed(trail):
+        c = cell_of(x, y, size)
+        if not cells or cells[-1] != c:
+            cells.append(c)
+    loopless, i = [], 0
+    while i < len(cells):
+        loopless.append(cells[i])
+        i = max(k for k in range(i, len(cells)) if cells[k] == cells[i]) + 1
+    trail = [center(c, size) for c in reversed(loopless)]
+
+    def free(a, b):
+        mask = clear if wide is None or min(abs(b[0] - a[0]), abs(b[1] - a[1])) < 0.01 else wide
+        n = max(1, int(math.dist(a, b) / step))
+        for k in range(n + 1):
+            x, y = a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n
+            r, c = int((y - origin[1]) / resolution), int((x - origin[0]) / resolution)
+            if not (0 <= r < mask.shape[0] and 0 <= c < mask.shape[1] and mask[r, c]):
+                return False
+        return True
+
+    pts = [tuple(start)] + [tuple(p) for p in reversed(trail)]
+    route, i = [], 0
+    while i < len(pts) - 1:
+        i = next(j for j in range(len(pts) - 1, i, -1) if j == i + 1 or free(pts[i], pts[j]))
+        # 같은 직선을 이어 가는 경유점은 합침: 경유점마다 서도록 늦춰 한 통로를 F800·F837로 끊어 갔음 (Gazebo m4 5차)
+        if len(route) >= 2:
+            (ax, ay), (bx, by), (qx, qy) = route[-2], route[-1], pts[i]
+            if (abs((bx - ax) * (qy - by) - (by - ay) * (qx - bx)) < 1e-6
+                    and (bx - ax) * (qx - bx) + (by - ay) * (qy - by) > 0):
+                route[-1] = pts[i]
+                continue
+        route.append(pts[i])
+    return route
+
+
 def return_route(start, states, passable, is_goal, walls, unknown_cost=4):
     """Cheapest 4-connected path start..goal on the own map: no blocked cell, no wall face (wall_faces) crossed,
     a FREE cell costs 1 and an UNKNOWN one unknown_cost (모르는 칸은 지나갈 수는 있지만 확인된 빈 칸 길이 먼저).
@@ -406,13 +465,25 @@ def lattice_fix(points, pose, size, max_yaw=math.radians(4.0), max_shift=0.12, t
     return (dx if nx >= min_points else 0.0, dy if ny >= min_points else 0.0, float(dyaw))
 
 
-def scan_points(ranges, angle_min, angle_inc, yaw_offset):
-    """LaserScan -> [(x, y)] in base_link. 무효 측정(0.0·inf·nan)은 버립니다."""
+def scan_points(ranges, angle_min, angle_inc, yaw_offset, edge_jump=0.0):
+    """LaserScan -> [(x, y)] in base_link. 무효 측정(0.0·inf·nan)은 버립니다.
+
+    edge_jump > 0이면 경계 잡점도 버림: 물체 가장자리에서 G4는 앞 물체와 뒤 벽 사이 허공에 점을 찍음(빔 하나가 두 면에
+    걸림). 이런 점은 양옆 빔 어느 쪽과도 거리가 크게 달라 외톨이로 남으므로, 이웃 둘 다와 edge_jump·max(1, r) m 넘게
+    다르면 버림. 벽 위 이웃 빔은 1 m에서 0.4° 간격이라 비스듬한 벽(80°)도 4 cm 안이라 남음
+    """
+    def valid(r):
+        return math.isfinite(r) and r > 0.0
+
     points = []
     for i, r in enumerate(ranges):
-        if math.isfinite(r) and r > 0.0:
-            a = angle_min + i * angle_inc + yaw_offset
-            points.append((r * math.cos(a), r * math.sin(a)))
+        if not valid(r):
+            continue
+        if edge_jump > 0 and not any(0 <= j < len(ranges) and valid(ranges[j])
+                                     and abs(ranges[j] - r) <= edge_jump * max(1.0, r) for j in (i - 1, i + 1)):
+            continue
+        a = angle_min + i * angle_inc + yaw_offset
+        points.append((r * math.cos(a), r * math.sin(a)))
     return points
 
 
@@ -528,6 +599,19 @@ def wall_push(points, keep, gain, reach=0.25):
     left = min((y for x, y in points if -0.1 < x < reach and 0 < y < keep), default=keep)
     right = min((-y for x, y in points if -0.1 < x < reach and -keep < y < 0), default=keep)
     return gain * (left - right)
+
+
+def passage(points, reach=0.45, side=0.35):
+    """(centre offset m, + = left; width m) of the gap between the nearest walls left and right just ahead, or None.
+
+    로봇 앞(-0.05~reach m)에서 양옆(4~side cm) 가장 가까운 벽 점(각 3번째, 잡음 두 점 무시) 사이를 길로 봄.
+    경기장의 모든 길은 로봇이 지나가게 되어 있어 가운데에만 있으면 지나감 (2026-11-01 사용자).
+    """
+    left = sorted(y for x, y in points if -0.05 < x < reach and 0.04 < y < side)
+    right = sorted(-y for x, y in points if -0.05 < x < reach and 0.04 < -y < side)
+    if len(left) < 3 or len(right) < 3:
+        return None
+    return (left[2] - right[2]) / 2, left[2] + right[2]
 
 
 def to_line(points, pose, origin, target):

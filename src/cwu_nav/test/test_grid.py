@@ -392,3 +392,47 @@ def test_an_entry_needs_the_beam_to_have_crossed_its_boundary():
     assert states[(2, 2)] == UNKNOWN
     entries = open_frontier(grid, RES, origin, states, SIZE)
     assert (1, 2) in entries and (2, 2) in entries and (2, 1) not in entries
+
+
+def test_scan_points_drops_edge_ghosts():
+    # 앞 벽 1.0 m와 뒤 벽 2.0 m 사이 허공의 외톨이 점(1.5)만 버리고, 이어진 벽 점과 비스듬한 벽(4 cm 차)은 남김
+    ranges = [1.0, 1.0, 1.5, 2.0, 2.0, 2.04, 2.08]
+    assert len(scan_points(ranges, 0.0, 0.01, 0.0)) == 7
+    kept = scan_points(ranges, 0.0, 0.01, 0.0, edge_jump=0.05)
+    assert len(kept) == 6 and all(abs(math.hypot(x, y) - 1.5) > 1e-6 for x, y in kept)
+
+
+def test_trail_route_shortcuts_but_not_through_walls():
+    # 칸 0.4 m, 지도 원점 (-0.2, -0.2). 칸 (0,j)|(1,j) 경계 x = 0.2에 y -0.2~1.0 벽 (j 0~2 옆).
+    # 자취: 집 (0,0) → (0,3) → (1,3) → 막다른 (2,3) 갔다 옴 → (1,0)
+    from cwu_nav.grid import clear_pixels, trail_route
+    grid = np.zeros((48, 48), np.int8)
+    grid[0:24, 8] = 100
+    cells = [(0, j) for j in range(4)] + [(1, 3), (2, 3), (1, 3)] + [(1, j) for j in (2, 1, 0)]
+    trail = [(0.4 * i + dx, 0.4 * j) for i, j in cells for dx in (-0.03, 0.03)]
+    route = trail_route((0.4, 0.0), trail, clear_pixels(grid, 0.05, 0.17), (-0.2, -0.2), 0.05, 0.4)
+    assert route[-1] == (0.0, 0.0) and len(route) <= 4
+    assert all(abs(x - 0.8) > 0.1 for x, _ in route)  # 막다른 (2,3)은 안 감
+    for a, b in zip([(0.4, 0.0)] + route, route):  # 어느 구간도 벽(x 0.2, y 1.0 아래)을 건너지 않음
+        if (a[0] - 0.2) * (b[0] - 0.2) < 0:
+            t = (0.2 - a[0]) / (b[0] - a[0])
+            assert a[1] + t * (b[1] - a[1]) > 1.0
+
+
+def test_trail_route_merges_waypoints_on_one_line():
+    # 곧은 통로 자취(집 (0,0) → (4,0))는 경유점 하나(집)로: 중간 칸마다 서지 않음
+    from cwu_nav.grid import clear_pixels, trail_route
+    grid = np.zeros((48, 48), np.int8)
+    grid[[3, 12], :] = 100  # 통로 양옆 벽 (y -0.2·0.4 근처)
+    trail = [(0.4 * i, 0.0) for i in range(5)]
+    route = trail_route((1.6, 0.0), trail, clear_pixels(grid, 0.05, 0.17), (-0.2, -0.2), 0.05, 0.4)
+    assert route == [(0.0, 0.0)] or len(route) <= 2 and route[-1] == (0.0, 0.0)
+
+
+def test_passage_centre_and_width():
+    from cwu_nav.grid import passage
+    # 40 cm 길, 가운데가 로봇보다 8 cm 왼쪽 (왼쪽 벽 +28, 오른쪽 벽 -12)
+    pts = [(0.1 + 0.05 * k, 0.28) for k in range(6)] + [(0.1 + 0.05 * k, -0.12) for k in range(6)]
+    off, width = passage(pts)
+    assert abs(off - 0.08) < 1e-9 and abs(width - 0.40) < 1e-9
+    assert passage([(0.2, 0.28)] * 5) is None  # 한쪽만

@@ -89,7 +89,7 @@ def test_drive_frame():
     # 펌웨어 속도 모드: mm/s, rad/s. 한계(150 mm/s, 1.2 rad/s)를 넘으면 보드가 ABORT하므로 비율 유지 축소.
     assert drive_frame(0.0, 0.0) == b'[V0,0.000]'
     assert drive_frame(0.08, 0.3) == b'[V80,0.300]'
-    assert drive_frame(0.3, 1.2) == b'[V150,0.600]'     # curvature kept
+    assert drive_frame(2.0, 3.0) == b'[V1000,1.500]'    # curvature kept
     assert b' ' not in drive_frame(-0.0001, -0.0001)     # 공백은 보드 정지 명령
 
 

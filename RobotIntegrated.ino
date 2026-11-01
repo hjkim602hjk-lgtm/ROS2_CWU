@@ -56,10 +56,21 @@ int targetAngleL = OPEN_LEFT, targetAngleR = OPEN_RIGHT;
 
 // ---------- Control ----------
 constexpr int BASE_PWM = 110;
-constexpr int MAX_PWM = 180;
+constexpr int MAX_PWM = 255;  // 180 → 255 (2026-10-31 사용자): 속도는 Pi 미션이 조절
 // Straight starts only: release each wheel at its first pulse or after 150 ms.
 constexpr int STRAIGHT_START_PWM = 35;
 constexpr uint32_t STRAIGHT_START_MS = 150;
+// Velocity-mode starts from rest (2026-10-31): the left wheel breaks away at PWM ~36, the right at ~23
+// (1 m runs), so the right one rolled first and the robot yawed 0.8 deg left before the heading loop
+// caught it. Each wheel gets its own breakaway PWM until it has rolled VELOCITY_START_MM (the first pulse
+// came after 0.2 mm of gear play and the wheel stalled again) or the window ends.
+constexpr int VELOCITY_START_PWM_L = 34;
+constexpr int VELOCITY_START_PWM_R = 22;
+constexpr float VELOCITY_START_MM = 5.0f;
+// Breakaway differs run to run (34/22 left led -0.8 deg, 31/24 right led +2.2 deg), so during the start the
+// wheel more than VELOCITY_SYNC_MM ahead waits (PWM 0) for the other one to catch up.
+constexpr float VELOCITY_SYNC_MM = 1.0f;
+constexpr uint32_t VELOCITY_START_MS = 600;
 constexpr int PSD_THRESHOLD = 550;
 // Front PSD stop only when the reading holds this long. Single noisy samples run 70-150 above
 // the median (2026-10-14), so one sample >= 550 stopped the robot with the cube short of the jaws.
@@ -74,7 +85,7 @@ constexpr motor::Gains RIGHT_GAINS = {2.0f, 4.0f, 0.0f};
 constexpr float CRUISE_RPM = 50.0f;
 constexpr float TURN_RPM = 15.0f;
 constexpr float CREEP_RPM = 1.0f;
-constexpr float ACCEL_MM_S2 = 100.0f; // Tune for mass, traction and stopping distance.
+constexpr float ACCEL_MM_S2 = 300.0f; // 100 → 300 (2026-10-31 1 m 시험: 0.25 m/s 90% 3.35 → 2.3 s, 400은 2.2 s로 거의 같음)
 constexpr float PATH_KP_PER_S = 1.0f;
 constexpr float PATH_TRIM_MM_S = 15.0f;
 
@@ -153,7 +164,9 @@ int targetPWM_L = 0, targetPWM_R = 0;
 int lastSignL = 0, lastSignR = 0;
 
 // Velocity mode (BASE_NAV_V1 protocol). Limits match the old Pi client (encoder_odom scales to them).
-constexpr float MAX_V_MM_S = 150.0f, MAX_W_RAD_S = 1.2f;
+// 속도 상한은 사실상 없앰 (2026-10-31 사용자: 150 mm/s·1.2 rad/s → 실제 한계는 MAX_PWM 255, 속도는 Pi 미션이 조절).
+// 깨진 프레임만 거르게 넉넉한 값으로 남김
+constexpr float MAX_V_MM_S = 1000.0f, MAX_W_RAD_S = 6.0f;
 constexpr float IN_PLACE_MM_S = 10.0f;     // |v| at or below this = turning in place: no front PSD stop
 constexpr uint32_t VELOCITY_TIMEOUT_MS = 300;
 constexpr uint32_t FAST_TELEMETRY_MS = 50;
@@ -567,6 +580,18 @@ void updateSpeedControl() {
   if (r != startR) encoderPulseSeenR = true;
   const bool straightStart = mode == MODE_DISTANCE ||
                              mode == MODE_PID_TEST || mode == MODE_PID_CONTINUOUS;
+  if (mode == MODE_VELOCITY && millis() - motionTime < VELOCITY_START_MS) {
+    const float movedL = fabsf((float)motor::delta(l, startL)) / wheelScaleL();
+    const float movedR = fabsf((float)motor::delta(r, startR)) / wheelScaleR();
+    if (targetRpmL != 0 && movedL < VELOCITY_START_MM)
+      pl = (targetRpmL > 0 ? 1 : -1) * max(abs(pl), VELOCITY_START_PWM_L);
+    if (targetRpmR != 0 && movedR < VELOCITY_START_MM)
+      pr = (targetRpmR > 0 ? 1 : -1) * max(abs(pr), VELOCITY_START_PWM_R);
+    if (min(movedL, movedR) < VELOCITY_START_MM) {
+      if (movedL - movedR > VELOCITY_SYNC_MM) pl = 0;
+      else if (movedR - movedL > VELOCITY_SYNC_MM) pr = 0;
+    }
+  }
   if (straightStart && millis() - motionTime < STRAIGHT_START_MS) {
     if (!encoderPulseSeenL && targetRpmL > 0 && !reachedL)
       pl = max(pl, STRAIGHT_START_PWM);

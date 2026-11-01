@@ -61,7 +61,7 @@ SAMPLE_PERIOD = 0.1
 # 정지 중에도 20 Hz CSV를 켭니다 ([N1]은 토글이 아니라 여러 번 보내도 같음).
 STREAM_ON = b'[N1]'
 # 펌웨어 속도 모드 한계 (MAX_V_MM_S, MAX_W_RAD_S). 넘으면 보드가 ABORT VELOCITY_RANGE로 멈춥니다.
-MAX_V, MAX_W = 0.15, 1.2
+MAX_V, MAX_W = 1.0, 6.0  # 펌웨어 2026-10-31: 상한 사실상 없앰 (실제 한계 PWM 255, 속도는 미션이 조절)
 # /base/command 허용 목록. 괄호 명령은 [..]로 감싸 보내고 한 글자 명령(q 정지, 7 열기, 8 잡기)은 그대로.
 COMMAND = re.compile(r'(F\d{3,4}|T[LR]\d{2,3}|PF[01]|ARM)')  # PF0/PF1 = 운반 중 정면 PSD 정지 끄기/켜기
 # 펌웨어는 Pi(UART)가 시작한 이동에 하트비트를 요구합니다: 200 ms마다 '!', 700 ms 넘으면 ABORT.

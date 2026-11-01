@@ -10,6 +10,7 @@
 | `start_mission1.sh` / `stop_mission1.sh` | 미션 1 시작(경기 명령) / 시험용 정지. 시작 때 Pi 코드가 PC와 다르면 경고 |
 | `logs.sh [글자]` | (PC, 시험용) Pi의 `~/mission1.log` 실시간 로그. 글자를 주면 그 줄만 (`logs.sh 격자` = 위치 보정, `logs.sh →` = 상태 전이). Ctrl+C로 보기만 종료 |
 | `plot_record.py 기록.npz` | (PC, 시험 뒤) 미션이 끝나거나 멈출 때 Pi `~/mission1_record_날짜_시각.npz`에 저장된 지도·경로를 그림으로. `scp rpi:~/mission1_record_*.npz .` 로 가져와 실행 |
+| `motion_test.sh [all\|speed\|turn]` | (PC, 시험용) 속도 계단(0.08~0.25 m/s 전진·후진) 추종과 미션식 제자리 회전(TL/TR 90·180°) 실제 각도. 결과 CSV·그림은 `tools/field/motion_results/`. 로봇 앞뒤 0.6 m·둘레 0.35 m 비우고 벽이 2 m 안에 보이는 곳 |
 | `find_obstacle.py [방향°]` | (Pi) 로봇 기준 해당 방향 ±45°, 2 m 안 물체 묶음의 위치·크기 |
 | `save_scan.py OUT` | (Pi) 스캔 5장 중앙값 + SLAM 자세 저장 |
 | `home_err.py START END` | 두 스캔 정합 → 실제 위치 차 (SLAM 자세를 초기값으로) |

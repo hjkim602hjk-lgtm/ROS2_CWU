@@ -56,9 +56,10 @@ if pts:
     sc = ax.scatter(xs, ys, c=[t - t0 for t in ts], cmap='viridis', s=10, zorder=3)
     fig.colorbar(sc, ax=ax, fraction=0.04, pad=0.02, label='경과 시간 (s)')
     grasp = [t for t, e in events if '→ GRASP' in e]
-    if grasp:
-        g = min(pts, key=lambda p: abs(p[0] - grasp[0]))
-        ax.plot(g[1], g[2], 'D', color='orange', ms=11, mec='k', zorder=4, label=f'파지 ({grasp[0] - t0:.0f} s)')
+    for k, tg in enumerate(grasp):  # 파지마다 (놓쳤다 다시 쥔 판은 둘 이상, 첫 것만 그리면 오인 파지 자리만 보였음)
+        g = min(pts, key=lambda p: abs(p[0] - tg))
+        ax.plot(g[1], g[2], 'D', color='orange', ms=11, mec='k', zorder=4, label='파지' if k == 0 else None)
+        ax.annotate(f'{tg - t0:.0f} s', (g[1], g[2]), xytext=(6, 6), textcoords='offset points', fontsize=8, zorder=6)
     ax.plot(xs[-1], ys[-1], '*', color='gold', ms=18, mec='k', zorder=5, label='끝 위치')
 ax.set_xlim(-1.9, 1.9)
 ax.set_ylim(-1.9, 1.9)

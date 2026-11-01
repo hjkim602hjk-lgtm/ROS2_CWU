@@ -18,12 +18,18 @@ export ROS_DOMAIN_ID=$((80 + num % 20)) GAZEBO_MODEL_DATABASE_URI=
 export GAZEBO_MASTER_URI=http://localhost:$((11345 + ROS_DOMAIN_ID))
 source /opt/ros/humble/setup.bash
 source install/setup.bash
+# 같은 도메인에 남은 노드부터 정리: 감시가 이 스크립트를 먼저 죽여 정리 못 한 판의 mission1·fake_board가 남아 같이 돌면서
+# 자세가 두 값 사이를 오가고 회전을 1초에 20번씩 새로 냈음 (2026-11-01 Gazebo 18m seed 821, 도메인 81에 세 판 분량)
+for p in $(pgrep -f 'humble/lib/|install/cwu_|gzserver|gzclient'); do  # slam_toolbox·static TF 등 ROS 노드 전부
+  grep -qxz "ROS_DOMAIN_ID=$ROS_DOMAIN_ID" /proc/"$p"/environ 2> /dev/null && kill -9 "$p"
+done
 # 칸 목록은 공백이 있어 배열로 넘김 (따옴표 없이 넘겨 world를 못 만들고 9시간 멈춘 적 있음, 2026-10-30)
 ros2 run cwu_sim make_maze --seed "$num" "${flag[@]}" --out "$out/maze_$seed.world" > "$out/maze_$seed.txt" \
   || { echo "seed $seed | world 생성 실패: $(tail -1 "$out/maze_$seed.txt")"; exit 1; }
 setsid ros2 launch cwu_sim maze.launch.py world:="$out/maze_$seed.world" gui:=$gui track:="$out/track_$seed.txt" \
   > "$out/maze_$seed.log" 2>&1 &
 group=$!
+trap 'kill -9 -- -$group 2> /dev/null; exit 1' INT TERM HUP  # 감시가 이 스크립트를 끊어도 launch 묶음까지 끔
 for _ in $(seq "$limit"); do
   sleep 1
   grep -q '미션 종료' "$out/maze_$seed.log" && break
